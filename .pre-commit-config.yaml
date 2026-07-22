@@ -1,7 +1,6 @@
-exclude: 'node_modules|.git'
-default_stages: [pre-commit]
+exclude: "node_modules|.git"
+default_stages: [pre-commit, manual]
 fail_fast: false
-
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -9,13 +8,21 @@ repos:
     hooks:
       - id: trailing-whitespace
         files: "frappe_snippe.*"
-        exclude: ".*json$|.*txt$|.*csv|.*md|.*svg"
+        exclude: ".*json$|.*txt$|.*csv|.*md|.*svg|frappe_snippe/public/frontend/.*|frappe_snippe/www/frontend.html"
+      - id: check-yaml
+      - id: no-commit-to-branch
+        args: ["--branch", "version-15", "--branch", "main", "--branch", "production"]
       - id: check-merge-conflict
       - id: check-ast
       - id: check-json
       - id: check-toml
-      - id: check-yaml
       - id: debug-statements
+
+  - repo: https://github.com/psf/black
+    rev: 24.1.1
+    hooks:
+      - id: black
+        args: ["--line-length", "110"]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.8.1
@@ -27,9 +34,6 @@ repos:
       - id: ruff
         name: "Run ruff linter"
 
-      - id: ruff-format
-        name: "Run ruff formatter"
-
   - repo: https://github.com/pre-commit/mirrors-prettier
     rev: v2.7.1
     hooks:
@@ -39,12 +43,13 @@ repos:
         exclude: |
             (?x)^(
                 frappe_snippe/public/dist/.*|
+                frappe_snippe/public/frontend/.*|
+                frappe_snippe/www/frontend.html|
                 .*node_modules.*|
                 .*boilerplate.*|
                 frappe_snippe/templates/includes/.*|
                 frappe_snippe/public/js/lib/.*
             )$
-
 
   - repo: https://github.com/pre-commit/mirrors-eslint
     rev: v8.44.0
@@ -56,6 +61,8 @@ repos:
         exclude: |
             (?x)^(
                 frappe_snippe/public/dist/.*|
+                frappe_snippe/public/frontend/.*|
+                frappe_snippe/www/frontend.html|
                 cypress/.*|
                 .*node_modules.*|
                 .*boilerplate.*|
@@ -63,7 +70,18 @@ repos:
                 frappe_snippe/public/js/lib/.*
             )$
 
+  # Frappe Semgrep security rules
+  - repo: local
+    hooks:
+      - id: frappe-semgrep-rules
+        name: "Frappe Semgrep Security Rules"
+        entry: bash -c 'if [ ! -d /home/elius-dev/pilot/benches/frappe-semgrep-rules/.git ]; then rm -rf /home/elius-dev/pilot/benches/frappe-semgrep-rules && GIT_TEMPLATE_DIR="" git clone --depth 1 https://github.com/frappe/semgrep-rules.git /home/elius-dev/pilot/benches/frappe-semgrep-rules; fi && semgrep ci --config /home/elius-dev/pilot/benches/frappe-semgrep-rules/rules' --
+        language: python
+        additional_dependencies: ['semgrep']
+        types: [python]
+        pass_filenames: false
+
 ci:
     autoupdate_schedule: weekly
-    skip: []
+    skip: [frappe-semgrep-rules]
     submodules: false

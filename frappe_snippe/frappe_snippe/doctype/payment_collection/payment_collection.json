@@ -1,0 +1,245 @@
+{
+ "actions": [],
+ "creation": "2026-07-21 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "naming_series",
+  "company",
+  "customer",
+  "customer_name",
+  "column_break_1",
+  "posting_date",
+  "payment_method",
+  "phone_number",
+  "total_amount",
+  "references_section",
+  "references",
+  "snippe_details_section",
+  "snippe_reference",
+  "status",
+  "failure_reason",
+  "column_break_2",
+  "payment_url",
+  "payment_qr_code",
+  "checkout_url",
+  "payment_link_url",
+  "hidden_section",
+  "idempotency_key",
+  "snippe_event_id",
+  "raw_response"
+ ],
+ "fields": [
+  {
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "Naming Series",
+   "options": "PAY-COL-.YYYY.-",
+   "default": "PAY-COL-.YYYY.-",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company",
+   "reqd": 1,
+   "in_standard_filter": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "label": "Customer",
+   "options": "Customer",
+   "reqd": 1,
+   "in_standard_filter": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "customer_name",
+   "fieldtype": "Data",
+   "label": "Customer Name",
+   "read_only": 1,
+   "fetch_from": "customer.customer_name"
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "posting_date",
+   "fieldtype": "Date",
+   "label": "Posting Date",
+   "default": "Today",
+   "reqd": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "payment_method",
+   "fieldtype": "Select",
+   "label": "Payment Method",
+   "options": "Mobile Money\nCard\nDynamic QR\nHosted Session",
+   "reqd": 1,
+   "in_standard_filter": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "phone_number",
+   "fieldtype": "Data",
+   "label": "Phone Number",
+   "description": "Required for Mobile Money and Card",
+   "depends_on": "eval:in_list(['Mobile Money', 'Card'], doc.payment_method)"
+  },
+  {
+   "fieldname": "total_amount",
+   "fieldtype": "Currency",
+   "label": "Total Amount",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "references_section",
+   "fieldtype": "Section Break",
+   "label": "References"
+  },
+  {
+   "fieldname": "references",
+   "fieldtype": "Table",
+   "label": "References",
+   "options": "Payment Collection Reference",
+   "reqd": 1
+  },
+  {
+   "fieldname": "snippe_details_section",
+   "fieldtype": "Section Break",
+   "label": "Snippe Details",
+   "read_only": 1
+  },
+  {
+   "fieldname": "snippe_reference",
+   "fieldtype": "Data",
+   "label": "Snippe Reference",
+   "read_only": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Draft\nPending\nCompleted\nFailed\nExpired\nVoided",
+   "default": "Draft",
+   "read_only": 1,
+   "in_standard_filter": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "failure_reason",
+   "fieldtype": "Small Text",
+   "label": "Failure Reason",
+   "read_only": 1,
+   "depends_on": "eval:doc.status=='Failed'"
+  },
+  {
+   "fieldname": "column_break_2",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "payment_url",
+   "fieldtype": "Data",
+   "label": "Card Payment URL",
+   "read_only": 1,
+   "depends_on": "eval:doc.payment_method=='Card'"
+  },
+  {
+   "fieldname": "payment_qr_code",
+   "fieldtype": "Small Text",
+   "label": "Payment QR Code (EMV)",
+   "read_only": 1,
+   "depends_on": "eval:doc.payment_method=='Dynamic QR'"
+  },
+  {
+   "fieldname": "checkout_url",
+   "fieldtype": "Data",
+   "label": "Checkout URL",
+   "read_only": 1,
+   "depends_on": "eval:doc.payment_method=='Hosted Session'"
+  },
+  {
+   "fieldname": "payment_link_url",
+   "fieldtype": "Data",
+   "label": "Payment Link URL (Short)",
+   "read_only": 1,
+   "depends_on": "eval:doc.payment_method=='Hosted Session'"
+  },
+  {
+   "fieldname": "hidden_section",
+   "fieldtype": "Section Break",
+   "hidden": 1
+  },
+  {
+   "fieldname": "idempotency_key",
+   "fieldtype": "Data",
+   "label": "Idempotency Key",
+   "read_only": 1,
+   "hidden": 1
+  },
+  {
+   "fieldname": "snippe_event_id",
+   "fieldtype": "Data",
+   "label": "Snippe Event ID",
+   "read_only": 1,
+   "hidden": 1
+  },
+  {
+   "fieldname": "raw_response",
+   "fieldtype": "Code",
+   "options": "JSON",
+   "label": "Raw API Response",
+   "read_only": 1,
+   "hidden": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "is_submittable": 1,
+ "autoname": "naming_series:",
+ "links": [],
+ "modified": "2026-07-21 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Frappe Snippe",
+ "name": "Payment Collection",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 0,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1,
+   "submit": 1,
+   "cancel": 1
+  },
+  {
+   "create": 1,
+   "delete": 0,
+   "read": 1,
+   "role": "Accounts Manager",
+   "write": 1,
+   "submit": 1,
+   "cancel": 1
+  },
+  {
+   "create": 1,
+   "delete": 0,
+   "read": 1,
+   "role": "Accounts User",
+   "write": 1,
+   "submit": 1,
+   "cancel": 0
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "track_changes": 1
+}

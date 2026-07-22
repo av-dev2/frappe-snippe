@@ -1,0 +1,42 @@
+[
+  {
+    "dt": "Salary Slip",
+    "fieldname": "disbursed",
+    "label": "Disbursed via Snippe",
+    "fieldtype": "Check",
+    "default": "0",
+    "read_only": 1,
+    "insert_after": "payment_document",
+    "print_hide": 1
+  },
+  {
+    "dt": "Purchase Invoice",
+    "fieldname": "disbursed",
+    "label": "Disbursed via Snippe",
+    "fieldtype": "Check",
+    "default": "0",
+    "read_only": 1,
+    "insert_after": "outstanding_amount",
+    "print_hide": 1
+  },
+  {
+    "dt": "Employee Advance",
+    "fieldname": "disbursed",
+    "label": "Disbursed via Snippe",
+    "fieldtype": "Check",
+    "default": "0",
+    "read_only": 1,
+    "insert_after": "paid_amount",
+    "print_hide": 1
+  },
+  {
+    "dt": "Expense Claim",
+    "fieldname": "disbursed",
+    "label": "Disbursed via Snippe",
+    "fieldtype": "Check",
+    "default": "0",
+    "read_only": 1,
+    "insert_after": "total_sanctioned_amount",
+    "print_hide": 1
+  }
+]

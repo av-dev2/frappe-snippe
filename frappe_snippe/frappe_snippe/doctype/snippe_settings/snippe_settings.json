@@ -1,0 +1,124 @@
+{
+ "actions": [],
+ "creation": "2026-07-21 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "integration_section",
+  "enabled",
+  "column_break_1",
+  "api_key",
+  "api_url",
+  "credentials_section",
+  "webhook_secret",
+  "automation_section",
+  "auto_create_sales_invoice",
+  "accounts_section",
+  "snippe_bank_account",
+  "column_break_3",
+  "default_narration"
+ ],
+ "fields": [
+  {
+   "fieldname": "integration_section",
+   "fieldtype": "Section Break",
+   "label": "Integration"
+  },
+  {
+   "default": "0",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enable Snippe Integration"
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "api_key",
+   "fieldtype": "Password",
+   "label": "Snippe API Key",
+   "description": "API key from Snippe Dashboard \u2192 Settings \u2192 API Keys. Starts with snp_"
+  },
+  {
+   "fieldname": "api_url",
+   "fieldtype": "Data",
+   "label": "Snippe API URL",
+   "description": "Base URL for Snippe API (e.g., https://api.snippe.sh)",
+   "default": "https://api.snippe.sh"
+  },
+  {
+   "fieldname": "credentials_section",
+   "fieldtype": "Section Break",
+   "label": "Webhook"
+  },
+  {
+   "fieldname": "webhook_secret",
+   "fieldtype": "Password",
+   "label": "Webhook Signing Secret",
+   "description": "From Snippe Dashboard \u2192 Settings \u2192 Webhook Secret. Used to verify incoming webhook signatures."
+  },
+  {
+   "fieldname": "automation_section",
+   "fieldtype": "Section Break",
+   "label": "Automation"
+  },
+  {
+   "default": "0",
+   "fieldname": "auto_create_sales_invoice",
+   "fieldtype": "Check",
+   "label": "Auto-create Sales Invoice from Sales Order",
+   "description": "If checked, completing a payment collection against a Sales Order will automatically create and submit a corresponding Sales Invoice."
+  },
+  {
+   "fieldname": "accounts_section",
+   "fieldtype": "Section Break",
+   "label": "Accounting"
+  },
+  {
+   "fieldname": "snippe_bank_account",
+   "fieldtype": "Link",
+   "label": "Snippe GL Account",
+   "options": "Account",
+   "description": "ERPNext GL account representing Snippe collected funds (used when auto-creating Payment Entries)"
+  },
+  {
+   "fieldname": "column_break_3",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Payment via Snippe",
+   "fieldname": "default_narration",
+   "fieldtype": "Small Text",
+   "label": "Default Payout Narration",
+   "description": "Default narration shown on recipient's mobile/bank statement for disbursements"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-07-21 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Frappe Snippe",
+ "name": "Snippe Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 0,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  },
+  {
+   "create": 0,
+   "delete": 0,
+   "read": 1,
+   "role": "Accounts Manager",
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "track_changes": 1
+}

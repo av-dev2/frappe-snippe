@@ -5,3 +5,8 @@
 tags
 node_modules
 __pycache__
+
+# Agent / editor config — not part of the app source
+.agents/
+.claude/
+skills-lock.json

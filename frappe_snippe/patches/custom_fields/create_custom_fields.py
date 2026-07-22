@@ -11,7 +11,7 @@ folder = "./custom_fields_json"
 def load_json(file):
     CURR_DIR = os.path.abspath(os.path.dirname(__file__))
     json_file_path = os.path.join(CURR_DIR, folder, file)
-    with open(json_file_path, "r") as file:  # nosemgrep
+    with open(json_file_path) as file:  # nosemgrep
         data = json.load(file)
     return data
 

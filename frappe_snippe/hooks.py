@@ -43,8 +43,15 @@ app_license = "mit"
 # page_js = {"page" : "public/js/file.js"}
 
 # include js in doctype views
-# doctype_js = {"doctype" : "public/js/doctype.js"}
-# doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
+doctype_js = {
+    "Sales Invoice": "public/js/snippe_collection.js",
+    "Sales Order": "public/js/snippe_collection.js",
+    "Purchase Invoice": "public/js/snippe_disbursement.js",
+    "Salary Slip": "public/js/snippe_disbursement.js",
+    "Employee Advance": "public/js/snippe_disbursement.js",
+    "Expense Claim": "public/js/snippe_disbursement.js",
+    "Payroll Entry": "public/js/snippe_disbursement.js",
+}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
 
@@ -90,6 +97,16 @@ app_license = "mit"
 
 # before_uninstall = "frappe_snippe.uninstall.before_uninstall"
 # after_uninstall = "frappe_snippe.uninstall.after_uninstall"
+
+after_migrate = [
+    "frappe_snippe.patches.custom_fields.create_custom_fields.execute",
+    "frappe_snippe.patches.property_setter.create_property_setters.execute",
+]
+
+doctype_list_js = {
+    "Custom Field": "frappe_snippe/patches/custom_fields/custom_field.js",
+    "Property Setter": "frappe_snippe/patches/property_setter/property_setter.js",
+}
 
 # Integration Setup
 # ------------------
@@ -148,23 +165,9 @@ app_license = "mit"
 # Scheduled Tasks
 # ---------------
 
-# scheduler_events = {
-# 	"all": [
-# 		"frappe_snippe.tasks.all"
-# 	],
-# 	"daily": [
-# 		"frappe_snippe.tasks.daily"
-# 	],
-# 	"hourly": [
-# 		"frappe_snippe.tasks.hourly"
-# 	],
-# 	"weekly": [
-# 		"frappe_snippe.tasks.weekly"
-# 	],
-# 	"monthly": [
-# 		"frappe_snippe.tasks.monthly"
-# 	],
-# }
+scheduler_events = {
+    "hourly": ["frappe_snippe.tasks.hourly"],
+}
 
 # Testing
 # -------
@@ -246,4 +249,3 @@ app_license = "mit"
 # ------------
 # List of apps whose translatable strings should be excluded from this app's translations.
 # ignore_translatable_strings_from = []
-

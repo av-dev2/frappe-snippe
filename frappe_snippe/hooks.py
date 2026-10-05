@@ -8,7 +8,7 @@ app_license = "mit"
 # Apps
 # ------------------
 
-# required_apps = []
+required_apps = ["erpnext"]
 
 # Each item in the list will be shown as an app in the apps page
 # add_to_apps_screen = [
@@ -90,7 +90,7 @@ doctype_js = {
 # ------------
 
 # before_install = "frappe_snippe.install.before_install"
-# after_install = "frappe_snippe.install.after_install"
+after_install = "frappe_snippe.install.after_install"
 
 # Uninstallation
 # ------------
@@ -114,7 +114,7 @@ doctype_list_js = {
 # Name of the app being installed is passed as an argument
 
 # before_app_install = "frappe_snippe.utils.before_app_install"
-# after_app_install = "frappe_snippe.utils.after_app_install"
+after_app_install = "frappe_snippe.install.after_app_install"
 
 # Integration Cleanup
 # -------------------

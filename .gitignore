@@ -10,3 +10,5 @@ __pycache__
 .agents/
 .claude/
 skills-lock.json
+# Cloned by the frappe-semgrep-rules pre-commit hook
+frappe-semgrep-rules/

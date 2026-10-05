@@ -6,7 +6,7 @@ import frappe
 from frappe.utils import get_url
 
 
-@frappe.whitelist(allow_guest=True)  # nosemgrep
+@frappe.whitelist(allow_guest=True, methods=["POST"])  # nosemgrep
 def handle():
 	"""
 	Handle incoming webhooks from Snippe.

@@ -44,13 +44,13 @@ required_apps = ["erpnext"]
 
 # include js in doctype views
 doctype_js = {
-    "Sales Invoice": "public/js/snippe_collection.js",
-    "Sales Order": "public/js/snippe_collection.js",
-    "Purchase Invoice": "public/js/snippe_disbursement.js",
-    "Salary Slip": "public/js/snippe_disbursement.js",
-    "Employee Advance": "public/js/snippe_disbursement.js",
-    "Expense Claim": "public/js/snippe_disbursement.js",
-    "Payroll Entry": "public/js/snippe_disbursement.js",
+	"Sales Invoice": "public/js/snippe_collection.js",
+	"Sales Order": "public/js/snippe_collection.js",
+	"Purchase Invoice": "public/js/snippe_disbursement.js",
+	"Salary Slip": "public/js/snippe_disbursement.js",
+	"Employee Advance": "public/js/snippe_disbursement.js",
+	"Expense Claim": "public/js/snippe_disbursement.js",
+	"Payroll Entry": "public/js/snippe_disbursement.js",
 }
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
@@ -99,13 +99,13 @@ after_install = "frappe_snippe.install.after_install"
 # after_uninstall = "frappe_snippe.uninstall.after_uninstall"
 
 after_migrate = [
-    "frappe_snippe.patches.custom_fields.create_custom_fields.execute",
-    "frappe_snippe.patches.property_setter.create_property_setters.execute",
+	"frappe_snippe.patches.custom_fields.create_custom_fields.execute",
+	"frappe_snippe.patches.property_setter.create_property_setters.execute",
 ]
 
 doctype_list_js = {
-    "Custom Field": "frappe_snippe/patches/custom_fields/custom_field.js",
-    "Property Setter": "frappe_snippe/patches/property_setter/property_setter.js",
+	"Custom Field": "frappe_snippe/patches/custom_fields/custom_field.js",
+	"Property Setter": "frappe_snippe/patches/property_setter/property_setter.js",
 }
 
 # Integration Setup
@@ -166,7 +166,7 @@ after_app_install = "frappe_snippe.install.after_app_install"
 # ---------------
 
 scheduler_events = {
-    "hourly": ["frappe_snippe.tasks.hourly"],
+	"hourly": ["frappe_snippe.tasks.hourly"],
 }
 
 # Testing

@@ -1,7 +1,8 @@
 import frappe
 from frappe.utils import now_datetime
+from snippe import AuthenticationError, ConflictError, NotFoundError, RateLimitError, ValidationError
 
-from frappe_snippe.api.client import get_snippe_client
+from frappe_snippe.api.client import PAYOUT_STATUS, get_snippe_client
 
 
 def hourly():
@@ -31,25 +32,28 @@ def reconcile_pending_disbursements():
 		for item in pd.items:
 			if item.status == "Pending" and item.snippe_reference:
 				try:
-					response = client.payouts.get(item.snippe_reference)
-
-					status_map = {
-						"pending": "Pending",
-						"successful": "Completed",
-						"failed": "Failed",
-						"reversed": "Reversed",
-					}
-					new_status = status_map.get(response.status, "Pending")
-
-					if new_status != item.status:
-						item.db_set("status", new_status)
-						if new_status in ("Failed", "Reversed"):
-							item.db_set("failure_reason", getattr(response, "failure_reason", ""))
-						updated = True
-				except Exception as e:
-					frappe.logger("frappe_snippe").error(
-						f"Failed to reconcile payout {item.snippe_reference}: {e!s}"
+					response = client.get_payout(item.snippe_reference)
+				except (
+					NotFoundError,
+					ValidationError,
+					ConflictError,
+					RateLimitError,
+					AuthenticationError,
+				) as e:
+					frappe.log_error(
+						title="Snippe payout reconcile failed",
+						message=f"Payout {item.snippe_reference}: {e.message}",
+						reference_doctype="Payment Disbursement",
+						reference_name=pd.name,
 					)
+					continue
+
+				new_status = PAYOUT_STATUS.get(response.status, "Pending")
+				if new_status != item.status:
+					item.db_set("status", new_status)
+					if new_status in ("Failed", "Reversed"):
+						item.db_set("failure_reason", response.failure_reason or "")
+					updated = True
 
 		if updated:
 			pd.update_status()

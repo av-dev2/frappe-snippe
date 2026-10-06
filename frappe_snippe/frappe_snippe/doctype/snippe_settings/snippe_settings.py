@@ -1,7 +1,11 @@
+import dataclasses
+
 import frappe
 from frappe import _
 from frappe.model.document import Document
 from frappe.utils import cint
+
+from frappe_snippe.api.client import get_snippe_client, snippe_errors_as_messages
 
 
 class SnippeSettings(Document):
@@ -14,6 +18,12 @@ class SnippeSettings(Document):
 			)
 			if root_type != "Expense" or is_group:
 				frappe.throw(_("Snippe Fees Account must be an Expense account that is not a group."))
+
+	@frappe.whitelist()
+	def get_balance(self):
+		"""Live Snippe wallet balance for the settings form; it is never stored."""
+		with get_snippe_client() as client, snippe_errors_as_messages():
+			return dataclasses.asdict(client.get_balance())
 
 	def get_card_return_urls(self):
 		if not self.card_redirect_url:

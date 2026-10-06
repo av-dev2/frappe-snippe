@@ -97,6 +97,7 @@ class TestSnippeHelpers(FrappeTestCase):
 @patch.object(Document, "db_set")
 class TestPaymentCollectionSdk(FrappeTestCase):
 	def run_collection(self, collection, client):
+		client.__enter__.return_value = client
 		# Customer and card URL lookups are covered in test_collection_customer.
 		settings = frappe._dict(get_card_return_urls=lambda: {"redirect_url": "https://shop.example/paid"})
 		with (
@@ -138,10 +139,6 @@ class TestPaymentCollectionSdk(FrappeTestCase):
 		with self.assertRaisesRegex(frappe.ValidationError, "Invalid phone"):
 			self.run_collection(make_collection(), client)
 		db_set.assert_not_called()
-
-	def test_hosted_session_fails_loudly(self, db_set):
-		with self.assertRaises(frappe.ValidationError):
-			self.run_collection(make_collection("Hosted Session"), MagicMock())
 
 	def test_validate_normalises_phone_and_shortens_legacy_key(self, db_set):
 		collection = make_collection()

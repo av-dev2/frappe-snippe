@@ -15,6 +15,10 @@
   "card_redirect_url",
   "column_break_card",
   "card_cancel_url",
+  "session_section",
+  "session_expiry_minutes",
+  "column_break_session",
+  "session_redirect_url",
   "automation_section",
   "auto_create_sales_invoice",
   "accounts_section",
@@ -86,6 +90,29 @@
    "description": "Page the customer returns to after cancelling a card payment. Uses the Card Redirect URL when empty."
   },
   {
+   "fieldname": "session_section",
+   "fieldtype": "Section Break",
+   "label": "Hosted Sessions"
+  },
+  {
+   "default": "60",
+   "fieldname": "session_expiry_minutes",
+   "fieldtype": "Int",
+   "label": "Session Expiry (Minutes)",
+   "description": "How long a hosted checkout link stays open, from 1 to 1440 minutes. Snippe uses 60 minutes when empty."
+  },
+  {
+   "fieldname": "column_break_session",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "session_redirect_url",
+   "fieldtype": "Data",
+   "options": "URL",
+   "label": "Session Redirect URL",
+   "description": "Page the customer returns to after paying on the hosted checkout. Snippe shows its own success page when empty."
+  },
+  {
    "fieldname": "automation_section",
    "fieldtype": "Section Break",
    "label": "Automation"
@@ -124,7 +151,7 @@
  "index_web_pages_for_search": 0,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-06 12:00:00.000000",
+ "modified": "2026-10-06 15:00:00.000000",
  "modified_by": "Administrator",
  "module": "Frappe Snippe",
  "name": "Snippe Settings",

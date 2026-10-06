@@ -1,7 +1,8 @@
 import json
 
 import frappe
-from frappe.utils import get_url
+from frappe import _
+from frappe.utils import flt, get_url
 from snippe import WebhookHandler, WebhookVerificationError
 
 from frappe_snippe.api.client import PAYMENT_STATUS, PAYOUT_STATUS
@@ -64,6 +65,11 @@ def process_webhook(event_data):
 	payload = event_data["data"]
 	metadata = payload.get("metadata") or {}
 	doc_name = metadata.get("erpnext_doc")
+	if not doc_name and is_payment and payload.get("session_reference"):
+		# Snippe's documented session event sends session_reference but no metadata.
+		doc_name = frappe.db.get_value(
+			"Payment Collection", {"snippe_reference": payload["session_reference"]}
+		)
 
 	frappe.get_doc(
 		{
@@ -101,13 +107,17 @@ def process_inbound_webhook(doc_name, new_status, event_id, payload):
 		values["failure_reason"] = payload.get("failure_reason")
 	doc.db_set(values)
 
-	for row in doc.references:
-		row.db_set("status", "Paid" if new_status == "Completed" else "Failed")
+	if new_status != "Completed":
+		for row in doc.references:
+			row.db_set("status", "Failed")
+		return
 
-	if new_status == "Completed":
-		create_payment_entry(doc)
-		if frappe.db.get_single_value("Snippe Settings", "auto_create_sales_invoice"):
-			auto_create_sales_invoice(doc)
+	paid_amount = (payload.get("amount") or {}).get("value")
+	if not paid_amount:
+		frappe.throw(_("Snippe event {0} for {1} has no paid amount.").format(event_id, doc_name))
+	create_payment_entry(doc, paid_amount)
+	if frappe.db.get_single_value("Snippe Settings", "auto_create_sales_invoice"):
+		auto_create_sales_invoice(doc)
 
 
 def process_outbound_webhook(doc_name, new_status, payload, metadata):
@@ -126,7 +136,8 @@ def process_outbound_webhook(doc_name, new_status, payload, metadata):
 	doc.update_status()
 
 
-def create_payment_entry(collection_doc):
+def create_payment_entry(collection_doc, paid_amount):
+	"""Post the amount Snippe received, allocated to references in row order."""
 	settings = frappe.get_single("Snippe Settings")
 
 	pe = frappe.new_doc("Payment Entry")
@@ -140,27 +151,29 @@ def create_payment_entry(collection_doc):
 	if settings.snippe_bank_account:
 		pe.paid_to = settings.snippe_bank_account
 
-	pe.paid_amount = collection_doc.total_amount
-	pe.received_amount = collection_doc.total_amount
+	pe.paid_amount = paid_amount
+	pe.received_amount = paid_amount
 	pe.reference_no = collection_doc.snippe_reference
 	pe.reference_date = collection_doc.posting_date
 
-	for row in collection_doc.references:
+	allocations = collection_doc.get_reference_allocations(paid_amount)
+	for row, amount in allocations:
 		pe.append(
 			"references",
 			{
 				"reference_doctype": row.reference_doctype,
 				"reference_name": row.reference_name,
-				"allocated_amount": row.allocated_amount,
+				"allocated_amount": amount,
 			},
 		)
 
 	pe.insert(ignore_permissions=True)
 	pe.submit()
 
-	# Link PE back to references
-	for row in collection_doc.references:
-		row.db_set("payment_entry", pe.name)
+	for row, amount in allocations:
+		row.db_set(
+			{"payment_entry": pe.name, "status": "Paid" if amount == flt(row.allocated_amount) else "Pending"}
+		)
 
 
 def auto_create_sales_invoice(collection_doc):

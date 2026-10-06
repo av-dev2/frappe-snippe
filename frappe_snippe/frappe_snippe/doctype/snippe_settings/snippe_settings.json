@@ -11,6 +11,10 @@
   "api_url",
   "credentials_section",
   "webhook_secret",
+  "card_section",
+  "card_redirect_url",
+  "column_break_card",
+  "card_cancel_url",
   "automation_section",
   "auto_create_sales_invoice",
   "accounts_section",
@@ -59,6 +63,29 @@
    "description": "From Snippe Dashboard \u2192 Settings \u2192 Webhook Secret. Used to verify incoming webhook signatures."
   },
   {
+   "fieldname": "card_section",
+   "fieldtype": "Section Break",
+   "label": "Card Payments"
+  },
+  {
+   "fieldname": "card_redirect_url",
+   "fieldtype": "Data",
+   "options": "URL",
+   "label": "Card Redirect URL",
+   "description": "Page the customer returns to after a successful card payment. Required for card collections."
+  },
+  {
+   "fieldname": "column_break_card",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "card_cancel_url",
+   "fieldtype": "Data",
+   "options": "URL",
+   "label": "Card Cancel URL",
+   "description": "Page the customer returns to after cancelling a card payment. Uses the Card Redirect URL when empty."
+  },
+  {
    "fieldname": "automation_section",
    "fieldtype": "Section Break",
    "label": "Automation"
@@ -97,7 +124,7 @@
  "index_web_pages_for_search": 0,
  "issingle": 1,
  "links": [],
- "modified": "2026-07-21 00:00:00.000000",
+ "modified": "2026-10-06 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Frappe Snippe",
  "name": "Snippe Settings",

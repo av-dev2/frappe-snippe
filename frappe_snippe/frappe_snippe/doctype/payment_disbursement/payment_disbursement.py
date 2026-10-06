@@ -1,14 +1,30 @@
-import uuid
-
 import frappe
+import httpx
 from frappe.model.document import Document
+from snippe import AuthenticationError, ConflictError, RateLimitError, SnippeError, ValidationError
 
-from frappe_snippe.api.client import get_snippe_client
+from frappe_snippe.api.client import (
+	PAYOUT_STATUS,
+	get_snippe_client,
+	is_valid_idempotency_key,
+	new_idempotency_key,
+	normalize_phone,
+	to_snippe_amount,
+)
+from frappe_snippe.api.webhooks import get_webhook_url
 
 
 class PaymentDisbursement(Document):
 	def before_insert(self):
 		self.calculate_totals()
+
+	def validate(self):
+		for row in self.items:
+			to_snippe_amount(row.amount)
+			if not is_valid_idempotency_key(row.idempotency_key):
+				row.idempotency_key = new_idempotency_key()
+			if row.channel == "Mobile Money":
+				row.phone_number = normalize_phone(row.phone_number)
 
 	def calculate_totals(self):
 		self.total_amount = sum(row.amount for row in self.items)
@@ -17,11 +33,6 @@ class PaymentDisbursement(Document):
 		# but the SDK might not expose fee estimation yet, so we'll leave it 0 or get it later.
 		self.total_fee = 0
 		self.total_to_deduct = self.total_amount + self.total_fee
-
-		# Ensure idempotency keys
-		for row in self.items:
-			if not row.idempotency_key:
-				row.idempotency_key = str(uuid.uuid4())
 
 	def on_submit(self):
 		# We process this asynchronously because bulk disbursements can take time
@@ -39,52 +50,48 @@ def process_disbursement_queue(payment_disbursement: str):
 	client = get_snippe_client()
 
 	settings = frappe.get_single("Snippe Settings")
-	default_narration = settings.default_narration or "Payment"
+	narration = doc.narration or settings.default_narration or "Payment"
 
 	for row in doc.items:
-		if row.status != "Pending":
+		if row.status != "Pending" or row.snippe_reference:
 			continue
 
-		metadata = {"erpnext_doc": doc.name, "row_id": row.name}
-
 		try:
-			if row.channel == "Mobile Money":
-				response = client.payouts.create(
-					amount=row.amount,
-					currency="TZS",
-					payment_method="mno",
-					phone_number=row.phone_number,
-					description=doc.narration or default_narration,
-					metadata=metadata,
-					idempotency_key=row.idempotency_key,
-				)
-			elif row.channel == "Bank Transfer":
-				response = client.payouts.create(
-					amount=row.amount,
-					currency="TZS",
-					payment_method="bank",
-					bank_code=row.bank_code,
-					account_number=row.bank_account,
-					account_name=row.recipient_name,
-					description=doc.narration or default_narration,
-					metadata=metadata,
-					idempotency_key=row.idempotency_key,
-				)
+			response = send_payout(client, row, narration, {"erpnext_doc": doc.name, "row_id": row.name})
+		except (ValidationError, ConflictError) as error:
+			row.db_set({"status": "Failed", "failure_reason": error.message})
+			continue
+		except (AuthenticationError, RateLimitError, SnippeError, httpx.TransportError) as error:
+			# Stop without raising: a rollback would drop references of payouts already sent.
+			frappe.log_error(
+				title="Snippe payout batch stopped",
+				message=str(error),
+				reference_doctype="Payment Disbursement",
+				reference_name=doc.name,
+			)
+			break
 
-			row.db_set("snippe_reference", response.id)
-			status_map = {
-				"pending": "Pending",
-				"successful": "Completed",
-				"failed": "Failed",
-				"reversed": "Reversed",
-			}
-			row.db_set("status", status_map.get(response.status, "Pending"))
-
-		except Exception as e:
-			row.db_set("status", "Failed")
-			row.db_set("failure_reason", str(e))
+		row.db_set(
+			{"snippe_reference": response.reference, "status": PAYOUT_STATUS.get(response.status, "Pending")}
+		)
 
 	doc.update_status()
+
+
+def send_payout(client, row, narration, metadata):
+	payout_kwargs = {
+		"amount": to_snippe_amount(row.amount),
+		"recipient_name": row.recipient_name,
+		"narration": narration,
+		"metadata": metadata,
+		"idempotency_key": row.idempotency_key,
+		"webhook_url": get_webhook_url(),
+	}
+	if row.channel == "Mobile Money":
+		return client.create_mobile_payout(recipient_phone=normalize_phone(row.phone_number), **payout_kwargs)
+	return client.create_bank_payout(
+		recipient_bank=row.bank_code, recipient_account=row.bank_account, **payout_kwargs
+	)
 
 
 def update_status(self):

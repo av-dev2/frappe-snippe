@@ -156,6 +156,8 @@ class TestPaymentDisbursementSdk(FrappeTestCase):
 			patch(f"{DISBURSEMENT_MODULE}.frappe.get_doc", return_value=disbursement),
 			patch(f"{DISBURSEMENT_MODULE}.frappe.get_single", return_value=frappe._dict()),
 			patch(f"{DISBURSEMENT_MODULE}.get_snippe_client", return_value=client),
+			# Accounting is covered in test_disbursement_accounting.
+			patch.object(disbursement, "book_item"),
 		):
 			process_disbursement_queue("PAY-DIS-TEST")
 
@@ -183,9 +185,8 @@ class TestPaymentDisbursementSdk(FrappeTestCase):
 		self.assertEqual(
 			(bank_kwargs["recipient_bank"], bank_kwargs["recipient_account"]), ("CRDB", "0211049375")
 		)
-		self.assertEqual(
-			db_set.call_args_list[0].args[0], {"snippe_reference": "po_ref", "status": "Completed"}
-		)
+		self.assertEqual(db_set.call_args_list[0].args[0], {"snippe_reference": "po_ref", "fee_amount": 0})
+		self.assertEqual(db_set.call_args_list[1].args[0], {"status": "Completed"})
 
 	def test_validation_error_fails_only_that_row(self, db_set):
 		disbursement = make_disbursement([mobile_item(), mobile_item(name="row-2")])
@@ -207,7 +208,11 @@ class TestPaymentDisbursementSdk(FrappeTestCase):
 
 		log_error.assert_called_once()
 		self.assertEqual(client.create_mobile_payout.call_count, 1)
-		row_updates = [call.args[0] for call in db_set.call_args_list if isinstance(call.args[0], dict)]
+		row_updates = [
+			call.args[0]
+			for call in db_set.call_args_list
+			if isinstance(call.args[0], dict) and "status" in call.args[0]
+		]
 		self.assertEqual(row_updates, [])
 
 	def test_server_error_keeps_references_of_sent_rows(self, db_set):
@@ -221,9 +226,11 @@ class TestPaymentDisbursementSdk(FrappeTestCase):
 
 		log_error.assert_called_once()
 		self.assertEqual(client.create_mobile_payout.call_count, 2)
-		self.assertEqual(
-			db_set.call_args_list[0].args[0], {"snippe_reference": "po_ref", "status": "Pending"}
-		)
+		self.assertEqual(db_set.call_args_list[0].args[0], {"snippe_reference": "po_ref", "fee_amount": 0})
+
+	def test_payout_queue_is_not_callable_over_the_api(self, db_set):
+		with self.assertRaises(frappe.PermissionError):
+			frappe.is_whitelisted(process_disbursement_queue)
 
 	def test_sent_rows_are_not_sent_again(self, db_set):
 		disbursement = make_disbursement([mobile_item(snippe_reference="po_old")])
@@ -243,6 +250,7 @@ class TestReconcilePayouts(FrappeTestCase):
 			patch("frappe_snippe.tasks.frappe.get_all", return_value=[frappe._dict(name="PAY-DIS-TEST")]),
 			patch("frappe_snippe.tasks.frappe.get_doc", return_value=disbursement),
 			patch("frappe_snippe.tasks.get_snippe_client", return_value=client),
+			patch.object(disbursement, "book_item"),
 		):
 			reconcile_pending_disbursements()
 
@@ -256,9 +264,8 @@ class TestReconcilePayouts(FrappeTestCase):
 
 		self.assertEqual(client.get_payout.call_args_list[0].args, ("po_1",))
 		set_values = [call.args for call in db_set.call_args_list]
-		self.assertIn(("status", "Reversed"), set_values)
-		self.assertIn(("failure_reason", "Wallet closed"), set_values)
-		self.assertIn(("status", "Completed"), set_values)
+		self.assertIn(({"status": "Reversed", "failure_reason": "Wallet closed"},), set_values)
+		self.assertIn(({"status": "Completed"},), set_values)
 
 	def test_sdk_error_skips_only_that_payout(self, db_set):
 		disbursement = make_disbursement(
@@ -273,4 +280,7 @@ class TestReconcilePayouts(FrappeTestCase):
 		self.assertEqual(log_error.call_args.kwargs["reference_name"], "PAY-DIS-TEST")
 		self.assertIn("po_1", log_error.call_args.kwargs["message"])
 		self.assertEqual(client.get_payout.call_count, 2)
-		self.assertIn(("status", "Failed"), [call.args for call in db_set.call_args_list])
+		self.assertIn(
+			({"status": "Failed", "failure_reason": "Rejected"},),
+			[call.args for call in db_set.call_args_list],
+		)

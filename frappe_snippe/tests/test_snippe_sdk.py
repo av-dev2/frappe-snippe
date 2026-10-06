@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 import frappe
 from frappe.model.document import Document
 from frappe.tests.utils import FrappeTestCase
-from snippe import NotFoundError, Payment, Payout, RateLimitError, ServerError, ValidationError
+from snippe import Customer, NotFoundError, Payment, Payout, RateLimitError, ServerError, ValidationError
 
 from frappe_snippe.api.client import new_idempotency_key, normalize_phone, to_snippe_amount
 from frappe_snippe.frappe_snippe.doctype.payment_disbursement.payment_disbursement import (
@@ -97,7 +97,13 @@ class TestSnippeHelpers(FrappeTestCase):
 @patch.object(Document, "db_set")
 class TestPaymentCollectionSdk(FrappeTestCase):
 	def run_collection(self, collection, client):
-		with patch(f"{COLLECTION_MODULE}.get_snippe_client", return_value=client):
+		# Customer and card URL lookups are covered in test_collection_customer.
+		settings = frappe._dict(get_card_return_urls=lambda: {"redirect_url": "https://shop.example/paid"})
+		with (
+			patch(f"{COLLECTION_MODULE}.get_snippe_client", return_value=client),
+			patch(f"{COLLECTION_MODULE}.frappe.get_cached_doc", return_value=settings),
+			patch.object(collection, "get_snippe_customer", return_value=Customer("Asha", "Juma Mrisho")),
+		):
 			collection.process_collection()
 
 	def test_mobile_payment_uses_sdk_call(self, db_set):

@@ -1,19 +1,23 @@
 import dataclasses
+from contextlib import contextmanager
 
 import frappe
 from frappe import _
 from frappe.contacts.doctype.address.address import get_default_address
 from frappe.contacts.doctype.contact.contact import get_default_contact
 from frappe.model.document import Document
+from frappe.utils import cint, flt
 from snippe import AuthenticationError, ConflictError, Customer, RateLimitError, ValidationError
 
 from frappe_snippe.api.client import (
 	PAYMENT_STATUS,
+	SESSION_STATUS,
 	get_snippe_client,
 	is_valid_idempotency_key,
 	new_idempotency_key,
 	normalize_phone,
 	to_snippe_amount,
+	whole_tzs,
 )
 from frappe_snippe.api.webhooks import get_webhook_url
 
@@ -28,36 +32,94 @@ class PaymentCollection(Document):
 			self.idempotency_key = new_idempotency_key()
 		if self.phone_number:
 			self.phone_number = normalize_phone(self.phone_number)
+		if self.allow_custom_amount and self.payment_method != "Hosted Session":
+			frappe.throw(_("Allow Custom Amount works only with the Hosted Session payment method."))
 
 	def on_submit(self):
 		self.process_collection()
 
+	def on_cancel(self):
+		if self.payment_method == "Hosted Session" and self.status == "Pending" and self.snippe_reference:
+			with get_snippe_client() as client, snippe_errors_as_messages():
+				client.cancel_session(self.snippe_reference)
+			self.db_set("status", "Voided")
+
 	def process_collection(self):
-		if self.payment_method == "Hosted Session":
-			frappe.throw(_("Hosted Session is not supported by the Snippe Python SDK."))
-		if not self.phone_number:
+		is_session = self.payment_method == "Hosted Session"
+		if not is_session and not self.phone_number:
 			frappe.throw(_("Phone Number is required for {0}.").format(_(self.payment_method)))
 
-		try:
-			response = self.create_payment(get_snippe_client())
-		except (ValidationError, ConflictError, RateLimitError, AuthenticationError) as error:
-			frappe.throw(
-				_("Snippe rejected the payment: {0}").format(error.message),
-				title=_("Snippe Payment Rejected"),
-			)
-
-		self.db_set(
-			{
-				"raw_response": frappe.as_json(dataclasses.asdict(response)),
-				"snippe_reference": response.reference,
-				"status": PAYMENT_STATUS.get(response.status, "Pending"),
-				"payment_url": response.payment_url,
-				"payment_qr_code": response.payment_qr_code or response.qr_code,
-			}
-		)
+		with get_snippe_client() as client, snippe_errors_as_messages():
+			values = self.create_session(client) if is_session else self.create_payment(client)
+		self.db_set(values)
 
 		for row in self.references:
 			row.db_set("status", "Pending")
+
+	def create_session(self, client):
+		"""Open a Snippe hosted checkout for the collection total."""
+		settings = frappe.get_cached_doc("Snippe Settings")
+		session = client.create_session(
+			to_snippe_amount(self.total_amount),
+			description=_("Payment for {0}").format(self.name),
+			customer=self.get_session_customer(),
+			line_items=self.get_session_line_items(),
+			display={"show_line_items": True},
+			redirect_url=settings.session_redirect_url or None,
+			webhook_url=get_webhook_url(),
+			metadata={"erpnext_doc": self.name, "company": self.company},
+			expires_in=cint(settings.session_expiry_minutes) * 60 or None,
+			idempotency_key=self.idempotency_key,
+			**self.get_custom_amount_limits(),
+		)
+		return {
+			"raw_response": frappe.as_json(session),
+			"snippe_reference": session["reference"],
+			"status": SESSION_STATUS.get(session["status"], "Pending"),
+			"checkout_url": session["checkout_url"],
+			"payment_link_url": session.get("payment_link_url") or session["checkout_url"],
+		}
+
+	def get_custom_amount_limits(self):
+		if not self.allow_custom_amount:
+			return {}
+		return {
+			"allow_custom_amount": True,
+			"min_amount": whole_tzs(self.min_amount) or None,
+			"max_amount": whole_tzs(self.max_amount) or None,
+		}
+
+	def get_reference_allocations(self, paid_amount):
+		"""Split a received amount across references in row order; any excess stays unallocated."""
+		precision = self.precision("total_amount")
+		allocations = []
+		remaining = flt(paid_amount, precision)
+		for row in self.references:
+			amount = min(flt(row.allocated_amount, precision), remaining)
+			if amount <= 0:
+				break
+			allocations.append((row, amount))
+			remaining = flt(remaining - amount, precision)
+		return allocations
+
+	def get_session_customer(self):
+		customer = {
+			"name": self.customer_name or self.customer,
+			"phone": self.phone_number,
+			"email": self.get_snippe_customer().email,
+		}
+		return {key: value for key, value in customer.items() if value}
+
+	def get_session_line_items(self):
+		return [
+			{
+				"id": row.reference_name,
+				"name": f"{_(row.reference_doctype)} {row.reference_name}",
+				"quantity": 1,
+				"unit_price": whole_tzs(row.allocated_amount),
+			}
+			for row in self.references
+		]
 
 	def create_payment(self, client):
 		payment_kwargs = {
@@ -70,11 +132,20 @@ class PaymentCollection(Document):
 			"webhook_url": get_webhook_url(),
 		}
 		if self.payment_method == "Mobile Money":
-			return client.create_mobile_payment(**payment_kwargs)
-		if self.payment_method == "Card":
+			payment = client.create_mobile_payment(**payment_kwargs)
+		elif self.payment_method == "Card":
 			card_return_urls = frappe.get_cached_doc("Snippe Settings").get_card_return_urls()
-			return client.create_card_payment(**card_return_urls, **payment_kwargs)
-		return client.create_qr_payment(**payment_kwargs)
+			payment = client.create_card_payment(**card_return_urls, **payment_kwargs)
+		else:
+			payment = client.create_qr_payment(**payment_kwargs)
+
+		return {
+			"raw_response": frappe.as_json(dataclasses.asdict(payment)),
+			"snippe_reference": payment.reference,
+			"status": PAYMENT_STATUS.get(payment.status, "Pending"),
+			"payment_url": payment.payment_url,
+			"payment_qr_code": payment.payment_qr_code or payment.qr_code,
+		}
 
 	def get_snippe_customer(self):
 		"""Build the Snippe Customer from the customer's primary or default Contact."""
@@ -130,3 +201,14 @@ class PaymentCollection(Document):
 			"postcode": address.pincode,
 			"country": country_code.upper() if country_code else None,
 		}
+
+
+@contextmanager
+def snippe_errors_as_messages():
+	"""Show Snippe's rejection to the user and stop the submit or cancel."""
+	try:
+		yield
+	except (ValidationError, ConflictError, RateLimitError, AuthenticationError) as error:
+		frappe.throw(
+			_("Snippe rejected the request: {0}").format(error.message), title=_("Snippe Request Rejected")
+		)

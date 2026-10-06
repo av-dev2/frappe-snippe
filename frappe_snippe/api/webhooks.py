@@ -128,10 +128,7 @@ def process_outbound_webhook(doc_name, new_status, payload, metadata):
 	doc = frappe.get_doc("Payment Disbursement", doc_name)
 	row = next((row for row in doc.items if row.name == row_id), None)
 	if row:
-		values = {"status": new_status}
-		if new_status in ("Failed", "Reversed"):
-			values["failure_reason"] = payload.get("failure_reason")
-		row.db_set(values)
+		doc.set_item_status(row, new_status, payload.get("failure_reason"))
 
 	doc.update_status()
 

@@ -13,6 +13,9 @@
   "payment_method",
   "phone_number",
   "total_amount",
+  "allow_custom_amount",
+  "min_amount",
+  "max_amount",
   "references_section",
   "references",
   "snippe_details_section",
@@ -89,8 +92,8 @@
    "fieldname": "phone_number",
    "fieldtype": "Data",
    "label": "Phone Number",
-   "description": "Required for Mobile Money and Card",
-   "depends_on": "eval:in_list(['Mobile Money', 'Card'], doc.payment_method)"
+   "description": "Required for Mobile Money, Card and Dynamic QR. Optional for Hosted Session, where it prefills the checkout.",
+   "depends_on": "eval:doc.payment_method"
   },
   {
    "fieldname": "total_amount",
@@ -98,6 +101,28 @@
    "label": "Total Amount",
    "read_only": 1,
    "in_list_view": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "allow_custom_amount",
+   "fieldtype": "Check",
+   "label": "Allow Custom Amount",
+   "depends_on": "eval:doc.payment_method=='Hosted Session'",
+   "description": "Let the customer choose how much to pay on the hosted checkout. The Payment Entry records the amount actually paid."
+  },
+  {
+   "fieldname": "min_amount",
+   "fieldtype": "Currency",
+   "label": "Minimum Amount",
+   "depends_on": "eval:doc.allow_custom_amount",
+   "description": "Lowest amount the customer may pay. Snippe requires at least 500 TZS."
+  },
+  {
+   "fieldname": "max_amount",
+   "fieldtype": "Currency",
+   "label": "Maximum Amount",
+   "depends_on": "eval:doc.allow_custom_amount",
+   "description": "Highest amount the customer may pay."
   },
   {
    "fieldname": "references_section",
@@ -122,7 +147,8 @@
    "fieldtype": "Data",
    "label": "Snippe Reference",
    "read_only": 1,
-   "in_standard_filter": 1
+   "in_standard_filter": 1,
+   "search_index": 1
   },
   {
    "fieldname": "status",
@@ -205,7 +231,7 @@
  "is_submittable": 1,
  "autoname": "naming_series:",
  "links": [],
- "modified": "2026-07-21 00:00:00.000000",
+ "modified": "2026-10-06 17:00:00.000000",
  "modified_by": "Administrator",
  "module": "Frappe Snippe",
  "name": "Payment Collection",

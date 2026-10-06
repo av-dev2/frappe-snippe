@@ -17,6 +17,8 @@
   "total_fee",
   "column_break_2",
   "total_to_deduct",
+  "snippe_balance",
+  "balance_checked_on",
   "items_section",
   "items",
   "status_section",
@@ -114,6 +116,21 @@
    "in_list_view": 1
   },
   {
+   "fieldname": "snippe_balance",
+   "fieldtype": "Currency",
+   "label": "Snippe Balance",
+   "read_only": 1,
+   "no_copy": 1,
+   "description": "Available Snippe balance from the last Check Fees & Balance. Submit is blocked when it is below Total To Deduct."
+  },
+  {
+   "fieldname": "balance_checked_on",
+   "fieldtype": "Datetime",
+   "label": "Balance Checked On",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
    "fieldname": "items_section",
    "fieldtype": "Section Break",
    "label": "Items"
@@ -165,7 +182,7 @@
  "is_submittable": 1,
  "autoname": "naming_series:",
  "links": [],
- "modified": "2026-10-06 19:00:00.000000",
+ "modified": "2026-10-06 21:00:00.000000",
  "modified_by": "Administrator",
  "module": "Frappe Snippe",
  "name": "Payment Disbursement",

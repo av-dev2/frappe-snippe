@@ -48,7 +48,7 @@
    "fieldname": "disbursement_type",
    "fieldtype": "Select",
    "label": "Disbursement Type",
-   "options": "Salary\nPurchase Invoice\nLoan\nEmployee Advance\nExpense Claim\nOther",
+   "options": "Salary\nPurchase Invoice\nLoan\nEmployee Advance\nExpense Claim",
    "reqd": 1,
    "in_standard_filter": 1,
    "in_list_view": 1
@@ -165,7 +165,7 @@
  "is_submittable": 1,
  "autoname": "naming_series:",
  "links": [],
- "modified": "2026-07-21 00:00:00.000000",
+ "modified": "2026-10-06 19:00:00.000000",
  "modified_by": "Administrator",
  "module": "Frappe Snippe",
  "name": "Payment Disbursement",

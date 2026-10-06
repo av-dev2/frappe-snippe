@@ -1,8 +1,10 @@
 import frappe
 import httpx
 from frappe.model.document import Document
+from frappe.utils import flt
 from snippe import AuthenticationError, ConflictError, RateLimitError, SnippeError, ValidationError
 
+from frappe_snippe.accounting.disbursement_entries import book_completed_payout, reverse_payout_booking
 from frappe_snippe.api.client import (
 	PAYOUT_STATUS,
 	get_snippe_client,
@@ -28,11 +30,43 @@ class PaymentDisbursement(Document):
 
 	def calculate_totals(self):
 		self.total_amount = sum(row.amount for row in self.items)
-
-		# In a real scenario, we might want to calculate total_fee by calling an endpoint,
-		# but the SDK might not expose fee estimation yet, so we'll leave it 0 or get it later.
-		self.total_fee = 0
+		self.total_fee = sum(flt(row.fee_amount) for row in self.items)
 		self.total_to_deduct = self.total_amount + self.total_fee
+
+	def set_item_status(self, row, status, failure_reason=None):
+		"""Record a payout status change and book or reverse its accounting."""
+		# The row lock stops the payout queue and a webhook booking the same change twice.
+		if (
+			row.status == status
+			or frappe.db.get_value(row.doctype, row.name, "status", for_update=True) == status
+		):
+			return
+		values = {"status": status}
+		if status in ("Failed", "Reversed"):
+			values["failure_reason"] = failure_reason or ""
+		row.db_set(values)
+		self.book_item(row)
+
+	def book_item(self, row):
+		"""Book or reverse a row's accounting for its current status."""
+		# The payout already happened at Snippe, so an accounting failure must not roll back
+		# the recorded status; it is logged and the hourly job retries completed rows.
+		frappe.db.savepoint("snippe_payout_accounting")
+		try:
+			values = None
+			if row.status == "Completed":
+				values = book_completed_payout(self, row)
+			elif row.status == "Reversed":
+				values = reverse_payout_booking(self, row)
+			if values:
+				row.db_set(values)
+		except Exception:
+			frappe.db.rollback(save_point="snippe_payout_accounting")
+			frappe.log_error(
+				title="Snippe payout accounting failed",
+				reference_doctype="Payment Disbursement",
+				reference_name=self.name,
+			)
 
 	def on_submit(self):
 		# We process this asynchronously because bulk disbursements can take time
@@ -70,10 +104,11 @@ def process_disbursement_queue(payment_disbursement: str):
 			)
 			break
 
-		row.db_set(
-			{"snippe_reference": response.reference, "status": PAYOUT_STATUS.get(response.status, "Pending")}
-		)
+		row.db_set({"snippe_reference": response.reference, "fee_amount": response.fees.value})
+		doc.set_item_status(row, PAYOUT_STATUS.get(response.status, "Pending"))
 
+	doc.calculate_totals()
+	doc.db_set({"total_fee": doc.total_fee, "total_to_deduct": doc.total_to_deduct})
 	doc.update_status()
 
 

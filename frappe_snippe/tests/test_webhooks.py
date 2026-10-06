@@ -201,24 +201,28 @@ class TestWebhookDocumentUpdates(FrappeTestCase):
 			}
 		)
 
-	def run_inbound(self, collection, status, auto_invoice=0):
+	def run_inbound(self, collection, status, auto_invoice=0, amount=None):
+		payload = {"failure_reason": "Declined", "amount": amount or {"value": 50000, "currency": "TZS"}}
 		with (
 			patch.object(webhooks.frappe, "get_doc", return_value=collection),
 			patch.object(webhooks.frappe.db, "get_single_value", return_value=auto_invoice),
 			patch.object(webhooks, "create_payment_entry") as create_payment_entry,
 			patch.object(webhooks, "auto_create_sales_invoice") as auto_create_sales_invoice,
 		):
-			webhooks.process_inbound_webhook("PAY-COL-TEST", status, "evt_9", {"failure_reason": "Declined"})
+			webhooks.process_inbound_webhook("PAY-COL-TEST", status, "evt_9", payload)
 		return create_payment_entry, auto_create_sales_invoice
 
 	def test_completed_payment_posts_payment_entry(self, db_set):
 		create_payment_entry, auto_create_sales_invoice = self.run_inbound(
 			self.make_collection(), "Completed", 1
 		)
-		create_payment_entry.assert_called_once()
+		self.assertEqual(create_payment_entry.call_args.args[1], 50000)
 		auto_create_sales_invoice.assert_called_once()
 		self.assertIn(({"status": "Completed", "snippe_event_id": "evt_9"},), set_args(db_set))
-		self.assertIn(("status", "Paid"), set_args(db_set))
+
+	def test_completed_event_without_amount_fails_loudly(self, db_set):
+		with self.assertRaisesRegex(frappe.ValidationError, "no paid amount"):
+			self.run_inbound(self.make_collection(), "Completed", amount={"currency": "TZS"})
 
 	def test_repeated_completion_does_not_post_twice(self, db_set):
 		create_payment_entry, _auto = self.run_inbound(self.make_collection("Completed"), "Completed")

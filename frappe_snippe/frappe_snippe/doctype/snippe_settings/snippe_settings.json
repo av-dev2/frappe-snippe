@@ -21,8 +21,10 @@
   "session_redirect_url",
   "automation_section",
   "auto_create_sales_invoice",
+  "auto_submit_accounting_entries",
   "accounts_section",
   "snippe_bank_account",
+  "snippe_fees_account",
   "column_break_3",
   "default_narration"
  ],
@@ -125,6 +127,13 @@
    "description": "If checked, completing a payment collection against a Sales Order will automatically create and submit a corresponding Sales Invoice."
   },
   {
+   "default": "0",
+   "fieldname": "auto_submit_accounting_entries",
+   "fieldtype": "Check",
+   "label": "Auto Submit Accounting Entries",
+   "description": "Submit the Journal Entries and Loan Disbursements created for completed payouts. When unchecked they are saved as drafts for review."
+  },
+  {
    "fieldname": "accounts_section",
    "fieldtype": "Section Break",
    "label": "Accounting"
@@ -135,6 +144,13 @@
    "label": "Snippe GL Account",
    "options": "Account",
    "description": "ERPNext GL account representing Snippe collected funds (used when auto-creating Payment Entries)"
+  },
+  {
+   "fieldname": "snippe_fees_account",
+   "fieldtype": "Link",
+   "options": "Account",
+   "label": "Snippe Fees Account",
+   "description": "Expense account for the fee Snippe charges on each payout, for example Bank Charges under Indirect Expenses."
   },
   {
    "fieldname": "column_break_3",
@@ -151,7 +167,7 @@
  "index_web_pages_for_search": 0,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-06 15:00:00.000000",
+ "modified": "2026-10-06 19:00:00.000000",
  "modified_by": "Administrator",
  "module": "Frappe Snippe",
  "name": "Snippe Settings",

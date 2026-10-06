@@ -1,11 +1,12 @@
 import re
 import uuid
+from contextlib import contextmanager
 from urllib.parse import quote
 
 import frappe
 from frappe import _
 from frappe.utils import flt
-from snippe import Snippe
+from snippe import AuthenticationError, ConflictError, RateLimitError, Snippe, ValidationError
 
 MINIMUM_AMOUNT = 500
 IDEMPOTENCY_KEY_LENGTH = 30
@@ -140,3 +141,14 @@ def normalize_phone(phone):
 	if not re.fullmatch(r"255[67]\d{8}", digits):
 		frappe.throw(_("{0} is not a valid Tanzanian mobile number.").format(phone))
 	return digits
+
+
+@contextmanager
+def snippe_errors_as_messages():
+	"""Show Snippe's rejection to the user and stop the submit or cancel."""
+	try:
+		yield
+	except (ValidationError, ConflictError, RateLimitError, AuthenticationError) as error:
+		frappe.throw(
+			_("Snippe rejected the request: {0}").format(error.message), title=_("Snippe Request Rejected")
+		)

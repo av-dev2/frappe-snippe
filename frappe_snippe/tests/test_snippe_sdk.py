@@ -195,7 +195,8 @@ class TestPaymentDisbursementSdk(FrappeTestCase):
 		self.run_queue(disbursement, client)
 
 		self.assertEqual(
-			db_set.call_args_list[0].args[0], {"status": "Failed", "failure_reason": "Bad account"}
+			db_set.call_args_list[0].args[0],
+			{"status": "Failed", "failure_reason": "Bad account", "fee_amount": 0},
 		)
 		self.assertEqual(client.create_mobile_payout.call_count, 2)
 

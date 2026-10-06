@@ -44,7 +44,6 @@ class PaymentDisbursement(Document):
 		)
 
 
-@frappe.whitelist()
 def process_disbursement_queue(payment_disbursement: str):
 	doc = frappe.get_doc("Payment Disbursement", payment_disbursement)
 	client = get_snippe_client()

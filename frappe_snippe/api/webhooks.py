@@ -1,144 +1,129 @@
-import hashlib
-import hmac
 import json
 
 import frappe
 from frappe.utils import get_url
+from snippe import WebhookHandler, WebhookVerificationError
+
+from frappe_snippe.api.client import PAYMENT_STATUS, PAYOUT_STATUS
+
+PAYMENT_EVENTS = {
+	f"payment.{status}": PAYMENT_STATUS[status] for status in ("completed", "failed", "expired", "voided")
+}
+PAYOUT_EVENTS = {f"payout.{status}": PAYOUT_STATUS[status] for status in ("completed", "failed", "reversed")}
 
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])  # nosemgrep
 def handle():
-	"""
-	Handle incoming webhooks from Snippe.
-	"""
+	"""Verify a Snippe webhook and queue it for processing."""
 	settings = frappe.get_single("Snippe Settings")
 	if not settings.enabled:
-		frappe.local.response.http_status_code = 403
-		return {"status": "error", "message": "Integration disabled"}
+		return reject(403, "Integration disabled")
 
-	# Get webhook payload and signature
-	payload = frappe.request.get_data(as_text=True)
-	signature = frappe.get_request_header("X-Snippe-Signature")
-
-	if not signature:
-		frappe.local.response.http_status_code = 401
-		return {"status": "error", "message": "Missing signature"}
-
-	# Verify HMAC signature
-	secret = settings.get_password("webhook_secret")
+	secret = settings.get_password("webhook_secret", raise_exception=False)
 	if not secret:
-		frappe.local.response.http_status_code = 500
-		return {"status": "error", "message": "Webhook secret not configured"}
+		return reject(500, "Webhook secret not configured")
 
-	expected_sig = hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+	# verify_webhook() also parses the legacy flat payload, which rejects the 2026-01-25 envelope.
+	body = frappe.request.get_data()
+	try:
+		WebhookHandler(secret).verify_signature(
+			body,
+			frappe.get_request_header("X-Webhook-Signature"),
+			frappe.get_request_header("X-Webhook-Timestamp"),
+		)
+	except WebhookVerificationError as error:
+		return reject(401, error.message)
 
-	if not hmac.compare_digest(expected_sig, signature):
-		frappe.local.response.http_status_code = 401
-		return {"status": "error", "message": "Invalid signature"}
+	event_data = json.loads(body)
+	if not isinstance(event_data, dict) or not (
+		event_data.get("id") and event_data.get("type") and isinstance(event_data.get("data"), dict)
+	):
+		return reject(400, "Malformed webhook payload")
 
-	# Parse payload
-	data = json.loads(payload)
-	event_id = data.get("id")
-
-	# Check deduplication
-	if frappe.db.exists("Payment Log", {"event_id": event_id}):
+	if frappe.db.exists("Payment Log", {"event_id": event_data["id"]}):
 		return {"status": "success", "message": "Already processed"}
 
-	# Enqueue background processing
-	frappe.enqueue("frappe_snippe.api.webhooks.process_webhook", event_data=data, queue="short")
-
+	frappe.enqueue("frappe_snippe.api.webhooks.process_webhook", event_data=event_data, queue="short")
 	return {"status": "success"}
 
 
+def reject(status_code, message):
+	frappe.local.response.http_status_code = status_code
+	return {"status": "error", "message": message}
+
+
 def process_webhook(event_data):
-	event_id = event_data.get("id")
-	event_type = event_data.get("event")
-	payload = event_data.get("data", {})
+	event_type = event_data["type"]
+	new_status = PAYMENT_EVENTS.get(event_type) or PAYOUT_EVENTS.get(event_type)
+	if not new_status:
+		frappe.log_error(title="Unhandled Snippe webhook event", message=json.dumps(event_data, indent=2))
+		return
 
-	reference = payload.get("id")
-	status = payload.get("status")
-	metadata = payload.get("metadata", {})
+	is_payment = event_type in PAYMENT_EVENTS
+	source_doctype = "Payment Collection" if is_payment else "Payment Disbursement"
+	payload = event_data["data"]
+	metadata = payload.get("metadata") or {}
+	doc_name = metadata.get("erpnext_doc")
 
-	erpnext_doc_name = metadata.get("erpnext_doc")
-
-	direction = "Inbound" if event_type.startswith("payment") else "Outbound"
-
-	# Create Payment Log
-	log = frappe.get_doc(
+	frappe.get_doc(
 		{
 			"doctype": "Payment Log",
-			"event_id": event_id,
+			"event_id": event_data["id"],
 			"event_type": event_type,
-			"direction": direction,
-			"snippe_reference": reference,
-			"status": status,
-			"amount": payload.get("amount", {}).get("value", 0),
-			"channel": payload.get("channel"),
+			"direction": "Inbound" if is_payment else "Outbound",
+			"source_doctype": source_doctype if doc_name else None,
+			"source_name": doc_name,
+			"snippe_reference": payload.get("reference"),
+			"status": payload.get("status"),
+			"amount": (payload.get("amount") or {}).get("value", 0),
+			"channel": (payload.get("channel") or {}).get("provider"),
 			"failure_reason": payload.get("failure_reason"),
 			"raw_payload": json.dumps(event_data, indent=2),
 		}
-	)
+	).insert(ignore_permissions=True)
 
-	if erpnext_doc_name:
-		log.source_doctype = "Payment Collection" if direction == "Inbound" else "Payment Disbursement"
-		log.source_name = erpnext_doc_name
-
-	log.insert(ignore_permissions=True)
-
-	# Update documents
-	if direction == "Inbound" and erpnext_doc_name:
-		process_inbound_webhook(erpnext_doc_name, event_type, payload)
-	elif direction == "Outbound" and erpnext_doc_name:
-		process_outbound_webhook(erpnext_doc_name, event_type, payload, metadata)
+	if not doc_name:
+		return
+	if is_payment:
+		process_inbound_webhook(doc_name, new_status, event_data["id"], payload)
+	else:
+		process_outbound_webhook(doc_name, new_status, payload, metadata)
 
 
-def process_inbound_webhook(doc_name, event_type, payload):
-	doc = frappe.get_doc("Payment Collection", doc_name)
-	status_map = {
-		"payment.successful": "Completed",
-		"payment.failed": "Failed",
-		"payment.expired": "Expired",
-		"payment.voided": "Voided",
-	}
+def process_inbound_webhook(doc_name, new_status, event_id, payload):
+	doc = frappe.get_doc("Payment Collection", doc_name, for_update=True)
+	# A completed collection already has a Payment Entry; later events must not undo it.
+	if doc.status in (new_status, "Completed"):
+		return
 
-	new_status = status_map.get(event_type)
-	if new_status:
-		doc.db_set("status", new_status)
-		doc.db_set("snippe_event_id", payload.get("id"))
+	values = {"status": new_status, "snippe_event_id": event_id}
+	if new_status == "Failed":
+		values["failure_reason"] = payload.get("failure_reason")
+	doc.db_set(values)
 
-		if new_status == "Failed":
-			doc.db_set("failure_reason", payload.get("failure_reason"))
+	for row in doc.references:
+		row.db_set("status", "Paid" if new_status == "Completed" else "Failed")
 
-		# Update references
-		for row in doc.references:
-			row.db_set("status", "Paid" if new_status == "Completed" else "Failed")
-
-		# Create Payment Entry if completed
-		if new_status == "Completed":
-			create_payment_entry(doc)
-
-			# Handle auto-create sales invoice
-			settings = frappe.get_single("Snippe Settings")
-			if settings.auto_create_sales_invoice:
-				auto_create_sales_invoice(doc)
+	if new_status == "Completed":
+		create_payment_entry(doc)
+		if frappe.db.get_single_value("Snippe Settings", "auto_create_sales_invoice"):
+			auto_create_sales_invoice(doc)
 
 
-def process_outbound_webhook(doc_name, event_type, payload, metadata):
-	doc = frappe.get_doc("Payment Disbursement", doc_name)
+def process_outbound_webhook(doc_name, new_status, payload, metadata):
 	row_id = metadata.get("row_id")
+	if not row_id:
+		return
 
-	status_map = {"payout.successful": "Completed", "payout.failed": "Failed", "payout.reversed": "Reversed"}
+	doc = frappe.get_doc("Payment Disbursement", doc_name)
+	row = next((row for row in doc.items if row.name == row_id), None)
+	if row:
+		values = {"status": new_status}
+		if new_status in ("Failed", "Reversed"):
+			values["failure_reason"] = payload.get("failure_reason")
+		row.db_set(values)
 
-	new_status = status_map.get(event_type)
-	if new_status and row_id:
-		for row in doc.items:
-			if row.name == row_id:
-				row.db_set("status", new_status)
-				if new_status in ("Failed", "Reversed"):
-					row.db_set("failure_reason", payload.get("failure_reason"))
-				break
-
-		doc.update_status()
+	doc.update_status()
 
 
 def create_payment_entry(collection_doc):

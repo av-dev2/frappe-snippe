@@ -1,5 +1,4 @@
 import dataclasses
-from contextlib import contextmanager
 
 import frappe
 from frappe import _
@@ -7,7 +6,7 @@ from frappe.contacts.doctype.address.address import get_default_address
 from frappe.contacts.doctype.contact.contact import get_default_contact
 from frappe.model.document import Document
 from frappe.utils import cint, flt
-from snippe import AuthenticationError, ConflictError, Customer, RateLimitError, ValidationError
+from snippe import Customer
 
 from frappe_snippe.api.client import (
 	PAYMENT_STATUS,
@@ -16,6 +15,7 @@ from frappe_snippe.api.client import (
 	is_valid_idempotency_key,
 	new_idempotency_key,
 	normalize_phone,
+	snippe_errors_as_messages,
 	to_snippe_amount,
 	whole_tzs,
 )
@@ -201,14 +201,3 @@ class PaymentCollection(Document):
 			"postcode": address.pincode,
 			"country": country_code.upper() if country_code else None,
 		}
-
-
-@contextmanager
-def snippe_errors_as_messages():
-	"""Show Snippe's rejection to the user and stop the submit or cancel."""
-	try:
-		yield
-	except (ValidationError, ConflictError, RateLimitError, AuthenticationError) as error:
-		frappe.throw(
-			_("Snippe rejected the request: {0}").format(error.message), title=_("Snippe Request Rejected")
-		)

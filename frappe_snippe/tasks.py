@@ -1,12 +1,20 @@
+from collections import defaultdict
+
 import frappe
 from frappe.utils import now_datetime
 from snippe import AuthenticationError, ConflictError, NotFoundError, RateLimitError, ValidationError
 
 from frappe_snippe.api.client import PAYOUT_STATUS, get_snippe_client
 
+RETRY_FILTERS = (
+	{"docstatus": 1, "status": "Completed", "accounting_status": ("is", "not set")},
+	{"docstatus": 1, "status": "Reversed", "accounting_status": "Booked"},
+)
+
 
 def hourly():
 	reconcile_pending_disbursements()
+	book_missing_payout_accounting()
 
 
 def reconcile_pending_disbursements():
@@ -50,12 +58,24 @@ def reconcile_pending_disbursements():
 
 				new_status = PAYOUT_STATUS.get(response.status, "Pending")
 				if new_status != item.status:
-					item.db_set("status", new_status)
-					if new_status in ("Failed", "Reversed"):
-						item.db_set("failure_reason", response.failure_reason or "")
+					pd.set_item_status(item, new_status, response.failure_reason)
 					updated = True
 
 		if updated:
 			pd.update_status()
 
 		pd.db_set("last_status_check", now_datetime())
+
+
+def book_missing_payout_accounting():
+	"""Retry payout bookings and reversals that failed earlier."""
+	row_names_by_parent = defaultdict(set)
+	for filters in RETRY_FILTERS:
+		for row in frappe.get_all("Payment Disbursement Item", filters=filters, fields=["parent", "name"]):
+			row_names_by_parent[row.parent].add(row.name)
+
+	for parent, row_names in row_names_by_parent.items():
+		disbursement = frappe.get_doc("Payment Disbursement", parent, for_update=True)
+		for row in disbursement.items:
+			if row.name in row_names:
+				disbursement.book_item(row)

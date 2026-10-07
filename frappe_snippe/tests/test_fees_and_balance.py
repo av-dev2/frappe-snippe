@@ -121,7 +121,10 @@ class TestAmountChangesClearCheck(FrappeTestCase):
 		saved = make_checked_disbursement(70700)
 		edited = frappe.get_doc(saved.as_dict())
 		edit(edited)
-		with patch.object(edited, "get_doc_before_save", return_value=saved):
+		with (
+			patch.object(edited, "get_doc_before_save", return_value=saved),
+			patch.object(edited, "validate_amounts_due"),  # covered in test_amounts_due
+		):
 			edited.validate()
 		return edited
 

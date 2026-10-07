@@ -1,3 +1,5 @@
+from collections import defaultdict
+
 import frappe
 import httpx
 from frappe import _
@@ -5,6 +7,7 @@ from frappe.model.document import Document
 from frappe.utils import flt, fmt_money, format_datetime, now_datetime
 from snippe import AuthenticationError, ConflictError, RateLimitError, SnippeError, ValidationError
 
+from frappe_snippe.accounting.amounts_due import get_amounts_left_to_pay
 from frappe_snippe.accounting.disbursement_entries import book_completed_payout, reverse_payout_booking
 from frappe_snippe.api.client import (
 	PAYOUT_STATUS,
@@ -26,9 +29,32 @@ class PaymentDisbursement(Document):
 				row.idempotency_key = new_idempotency_key()
 			if row.channel == "Mobile Money":
 				row.phone_number = normalize_phone(row.phone_number)
+		self.validate_amounts_due()
 		if self.has_amounts_changed():
 			self.clear_fees_and_balance()
 		self.calculate_totals()
+
+	def validate_amounts_due(self):
+		"""Stop any document being paid more than it still owes, across all disbursements."""
+		requested = defaultdict(lambda: defaultdict(float))
+		for row in self.items:
+			requested[row.reference_doctype][row.reference_name] += flt(row.amount)
+
+		precision = self.precision("total_amount")
+		for reference_doctype, amounts in requested.items():
+			left_to_pay = get_amounts_left_to_pay(reference_doctype, list(amounts), self.name)
+			for reference_name, amount in amounts.items():
+				left = flt(left_to_pay.get(reference_name, 0), precision)
+				if flt(amount, precision) > left:
+					frappe.throw(
+						_("{0} {1} has {2} left to pay, but this disbursement pays {3}.").format(
+							_(reference_doctype),
+							reference_name,
+							fmt_money(max(left, 0), currency=self.get_currency()),
+							fmt_money(amount, currency=self.get_currency()),
+						),
+						title=_("Amount Exceeds What Is Owed"),
+					)
 
 	def has_amounts_changed(self):
 		before = self.get_doc_before_save()

@@ -29,6 +29,10 @@ def book_completed_payout(disbursement, row):
 		}
 
 	entry = make_journal_entry(disbursement, row, [get_payable_line(row), *fee_lines])
+	if row.reference_doctype == "Salary Slip":
+		# Same link HRMS sets for payroll bank entries; it marks the slip as paid.
+		frappe.db.set_value("Salary Slip", row.reference_name, "journal_entry", entry.name)
+
 	return {
 		"accounting_status": "Booked",
 		"accounting_entry_type": "Journal Entry",
@@ -42,6 +46,9 @@ def reverse_payout_booking(disbursement, row):
 		return None
 
 	if row.accounting_entry_type == "Journal Entry":
+		if row.reference_doctype == "Salary Slip":
+			frappe.db.set_value("Salary Slip", row.reference_name, "journal_entry", None)
+
 		return {
 			"accounting_status": "Reversed",
 			**reverse_journal_entry(disbursement, row, "accounting_entry"),

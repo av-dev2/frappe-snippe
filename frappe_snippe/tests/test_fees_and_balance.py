@@ -5,7 +5,13 @@ from frappe.tests.utils import FrappeTestCase
 from snippe import Balance, PayoutFee, RateLimitError
 
 from frappe_snippe.frappe_snippe.doctype.payment_disbursement import payment_disbursement
-from frappe_snippe.frappe_snippe.doctype.snippe_settings import snippe_settings
+from frappe_snippe.frappe_snippe.doctype.snippe_setting import snippe_setting
+from frappe_snippe.tests.test_snippe_setting import (
+	TZS_COMPANY,
+	TzsCompanyTestCase,
+	make_payout_setting,
+	make_snippe_setting,
+)
 
 
 def make_disbursement(*amounts):
@@ -117,6 +123,9 @@ class TestSubmitUsesSavedBalance(FrappeTestCase):
 
 
 class TestAmountChangesClearCheck(FrappeTestCase):
+	def setUp(self):
+		make_payout_setting()
+
 	def validate_edit(self, edit):
 		saved = make_checked_disbursement(70700)
 		edited = frappe.get_doc(saved.as_dict())
@@ -139,10 +148,14 @@ class TestAmountChangesClearCheck(FrappeTestCase):
 		self.assertEqual((edited.total_fee, edited.snippe_balance), (700, 70700))
 
 
-class TestSettingsBalance(FrappeTestCase):
+class TestSettingBalance(TzsCompanyTestCase):
 	def test_balance_is_returned_without_being_saved(self):
-		settings = frappe.get_doc("Snippe Settings")
-		with patch.object(snippe_settings, "get_snippe_client", return_value=make_client(250000)):
-			balance = settings.get_balance()
+		setting = make_snippe_setting()
+		with patch.object(
+			snippe_setting, "get_snippe_client", return_value=make_client(250000)
+		) as get_client:
+			balance = setting.get_balance()
+
+		get_client.assert_called_once_with(TZS_COMPANY)
 
 		self.assertEqual(balance, {"available_balance": 250000, "balance": 255000, "currency": "TZS"})

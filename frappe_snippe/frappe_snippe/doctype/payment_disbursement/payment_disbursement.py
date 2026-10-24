@@ -29,6 +29,9 @@ class PaymentDisbursement(Document):
 				row.idempotency_key = new_idempotency_key()
 			if row.channel == "Mobile Money":
 				row.phone_number = normalize_phone(row.phone_number)
+			else:
+				row.set_party_bank_details()
+				row.validate_bank_details()
 		self.validate_amounts_due()
 		if self.has_amounts_changed():
 			self.clear_fees_and_balance()

@@ -4,25 +4,38 @@ import frappe
 import httpx
 from frappe import _
 from frappe.model.document import Document
-from frappe.utils import flt, fmt_money, format_datetime, now_datetime
+from frappe.utils import flt, fmt_money, format_datetime, now_datetime, time_diff_in_hours
 from snippe import AuthenticationError, ConflictError, RateLimitError, SnippeError, ValidationError
 
 from frappe_snippe.accounting.amounts_due import get_amounts_left_to_pay
 from frappe_snippe.accounting.disbursement_entries import book_completed_payout, reverse_payout_booking
 from frappe_snippe.api.client import (
+	BACKGROUND_RATE_LIMIT_WAITS,
 	PAYOUT_STATUS,
 	get_snippe_client,
+	get_snippe_setting,
 	is_valid_idempotency_key,
 	new_idempotency_key,
 	normalize_phone,
 	snippe_errors_as_messages,
 	to_snippe_amount,
+	validate_rows_currency,
+	validate_snippe_account_currency,
 )
 from frappe_snippe.api.webhooks import get_webhook_url
+
+# Snippe keeps an idempotency key for 24 hours; after that a resent payout could pay twice.
+RESUME_WINDOW_HOURS = 20
 
 
 class PaymentDisbursement(Document):
 	def validate(self):
+		# validate runs before the mandatory check, so empty links are left to it.
+		if self.company:
+			get_snippe_setting(self.company).validate_payouts_enabled()
+		if self.paid_from_account:
+			validate_snippe_account_currency(self.paid_from_account)
+		validate_rows_currency(self.items)
 		for row in self.items:
 			to_snippe_amount(row.amount)
 			if not is_valid_idempotency_key(row.idempotency_key):
@@ -101,7 +114,7 @@ class PaymentDisbursement(Document):
 	def check_fees_and_balance(self):
 		"""Fetch Snippe fees and the wallet balance, save them on the draft, and return a preview."""
 		self.check_permission("write")
-		with get_snippe_client() as client, snippe_errors_as_messages():
+		with get_snippe_client(self.company) as client, snippe_errors_as_messages():
 			self.set_estimated_fees(client)
 			balance = client.get_balance()
 		self.snippe_balance = balance.available_balance
@@ -175,42 +188,67 @@ class PaymentDisbursement(Document):
 
 	def on_submit(self):
 		# We process this asynchronously because bulk disbursements can take time
-		self.db_set("status", "Processing")
+		self.db_set({"status": "Processing", "queued_on": now_datetime()})
+		self.queue_payouts()
+
+	def queue_payouts(self):
 		frappe.enqueue(
 			"frappe_snippe.frappe_snippe.doctype.payment_disbursement.payment_disbursement.process_disbursement_queue",
 			payment_disbursement=self.name,
-			queue="short",
+			queue="long",
+			job_id=f"snippe_payouts::{self.name}",
+			deduplicate=True,
+			enqueue_after_commit=True,
 		)
+
+	def get_unsent_rows(self):
+		return [row for row in self.items if row.status == "Pending" and not row.snippe_reference]
+
+	def resume_unsent_payouts(self):
+		"""Resend rows a stopped batch left unsent, or fail them once a resend could pay twice."""
+		if time_diff_in_hours(now_datetime(), self.queued_on) < RESUME_WINDOW_HOURS:
+			# A batch still queued or running is not queued again; see queue_payouts.
+			self.queue_payouts()
+			return
+
+		for row in self.get_unsent_rows():
+			row.db_set(
+				{
+					"status": "Failed",
+					"failure_reason": _(
+						"Snippe did not confirm this payout within {0} hours. Check the Snippe dashboard before you pay it again."
+					).format(RESUME_WINDOW_HOURS),
+				}
+			)
+		self.update_status()
 
 
 def process_disbursement_queue(payment_disbursement: str):
 	doc = frappe.get_doc("Payment Disbursement", payment_disbursement)
-	client = get_snippe_client()
+	narration = doc.narration or get_snippe_setting(doc.company).default_narration or "Payment"
 
-	settings = frappe.get_single("Snippe Settings")
-	narration = doc.narration or settings.default_narration or "Payment"
+	with get_snippe_client(doc.company, BACKGROUND_RATE_LIMIT_WAITS) as client:
+		for row in doc.get_unsent_rows():
+			try:
+				response = send_payout(client, row, narration, {"erpnext_doc": doc.name, "row_id": row.name})
+			except (ValidationError, ConflictError) as error:
+				row.db_set({"status": "Failed", "failure_reason": error.message, "fee_amount": 0})
+				frappe.db.commit()  # nosemgrep
+				continue
+			except (AuthenticationError, RateLimitError, SnippeError, httpx.TransportError) as error:
+				# Stop without raising; the hourly job resumes the unsent rows.
+				frappe.log_error(
+					title="Snippe payout batch stopped",
+					message=str(error),
+					reference_doctype="Payment Disbursement",
+					reference_name=doc.name,
+				)
+				break
 
-	for row in doc.items:
-		if row.status != "Pending" or row.snippe_reference:
-			continue
-
-		try:
-			response = send_payout(client, row, narration, {"erpnext_doc": doc.name, "row_id": row.name})
-		except (ValidationError, ConflictError) as error:
-			row.db_set({"status": "Failed", "failure_reason": error.message, "fee_amount": 0})
-			continue
-		except (AuthenticationError, RateLimitError, SnippeError, httpx.TransportError) as error:
-			# Stop without raising: a rollback would drop references of payouts already sent.
-			frappe.log_error(
-				title="Snippe payout batch stopped",
-				message=str(error),
-				reference_doctype="Payment Disbursement",
-				reference_name=doc.name,
-			)
-			break
-
-		row.db_set({"snippe_reference": response.reference, "fee_amount": response.fees.value})
-		doc.set_item_status(row, PAYOUT_STATUS.get(response.status, "Pending"))
+			row.db_set({"snippe_reference": response.reference, "fee_amount": response.fees.value})
+			doc.set_item_status(row, PAYOUT_STATUS.get(response.status, "Pending"))
+			# A sent payout is kept even if the job is killed later, so it is never sent again.
+			frappe.db.commit()  # nosemgrep
 
 	doc.calculate_totals()
 	doc.db_set({"total_fee": doc.total_fee, "total_to_deduct": doc.total_to_deduct})

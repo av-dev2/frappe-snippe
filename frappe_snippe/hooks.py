@@ -91,6 +91,7 @@ doctype_js = {
 
 # before_install = "frappe_snippe.install.before_install"
 after_install = "frappe_snippe.install.after_install"
+extend_bootinfo = "frappe_snippe.api.client.extend_bootinfo"
 
 # Uninstallation
 # ------------

@@ -5,12 +5,13 @@ import frappe
 import httpx
 from frappe.model.document import Document
 from frappe.tests.utils import FrappeTestCase
-from snippe import NotFoundError, ValidationError
+from snippe import NotFoundError, RateLimitError, ValidationError
 
 from frappe_snippe.api import webhooks
 from frappe_snippe.api.client import SnippeClient
 from frappe_snippe.frappe_snippe.doctype.payment_collection import payment_collection
 from frappe_snippe.tests.test_collection_customer import make_collection, make_customer
+from frappe_snippe.tests.test_snippe_setting import TZS_COMPANY, TzsCompanyTestCase, make_snippe_setting
 
 BASE_URL = "https://api.snippe.test/api/v1"
 SESSION = {
@@ -97,6 +98,38 @@ class TestSessionClient(FrappeTestCase):
 			(requests[0].method, requests[0].url.path), ("POST", "/api/v1/sessions/sess_abc123/cancel")
 		)
 
+	def test_background_client_waits_for_the_rate_limit_reset_and_resends(self):
+		replies = [
+			httpx.Response(429, json={"message": "Too many requests"}, headers={"X-Ratelimit-Reset": "17"}),
+			httpx.Response(429, json={"message": "Too many requests"}),
+			httpx.Response(201, json={"data": SESSION}),
+		]
+		client = SnippeClient(api_key="snp_test", base_url=BASE_URL, rate_limit_waits=2)
+		requests = []
+
+		def respond(request):
+			requests.append(request)
+			return replies.pop(0)
+
+		client._client = httpx.Client(base_url=BASE_URL, transport=httpx.MockTransport(respond))
+		with patch("frappe_snippe.api.client.time.sleep") as sleep:
+			self.assertEqual(client.create_session(1500, idempotency_key="key-1"), SESSION)
+
+		self.assertEqual([call.args for call in sleep.call_args_list], [(17,), (60,)])
+		self.assertEqual([request.headers["Idempotency-Key"] for request in requests], ["key-1"] * 3)
+
+	def test_user_request_fails_at_once_on_the_rate_limit(self):
+		client, requests = make_client(429, {"message": "Too many requests"})
+		with self.assertRaises(RateLimitError):
+			client.get_payout("po_1")
+		self.assertEqual(len(requests), 1)
+
+	def test_raw_payment_keeps_settlement(self):
+		payment = {"reference": "pi_1", "status": "completed", "settlement": {"fees": {"value": 9}}}
+		client, requests = make_client(200, {"code": 200, "data": payment})
+		self.assertEqual(client.get_payment_data("pi_1"), payment)
+		self.assertEqual(requests[0].url.path, "/api/v1/payments/pi_1")
+
 	def test_http_errors_map_to_sdk_errors(self):
 		client, _requests = make_client(404, {"message": "session not found"})
 		with self.assertRaises(NotFoundError):
@@ -104,7 +137,7 @@ class TestSessionClient(FrappeTestCase):
 
 
 @patch.object(Document, "db_set")
-class TestHostedSessionCollection(FrappeTestCase):
+class TestHostedSessionCollection(TzsCompanyTestCase):
 	def setUp(self):
 		self.customer = make_customer()
 		self.client = MagicMock()
@@ -112,9 +145,7 @@ class TestHostedSessionCollection(FrappeTestCase):
 		self.client.create_session.return_value = SESSION
 
 	def set_session_settings(self, expiry_minutes, redirect_url=None):
-		settings = frappe.get_single("Snippe Settings")
-		settings.update({"session_expiry_minutes": expiry_minutes, "session_redirect_url": redirect_url})
-		settings.save()
+		make_snippe_setting(session_expiry_minutes=expiry_minutes, session_redirect_url=redirect_url)
 
 	def make_session_collection(self, **values):
 		collection = make_collection(self.customer, "Hosted Session")
@@ -173,13 +204,11 @@ class TestHostedSessionCollection(FrappeTestCase):
 		db_set.assert_not_called()
 
 
-class TestSessionSettings(FrappeTestCase):
+class TestSessionSettings(TzsCompanyTestCase):
 	def test_expiry_outside_snippe_range_is_rejected(self):
-		settings = frappe.get_single("Snippe Settings")
 		for minutes in (-5, 1441):
-			settings.session_expiry_minutes = minutes
-			with self.assertRaises(frappe.ValidationError):
-				settings.save()
+			with self.assertRaisesRegex(frappe.ValidationError, "Session Expiry"):
+				make_snippe_setting(session_expiry_minutes=minutes)
 
 
 class TestSessionWebhook(FrappeTestCase):
@@ -194,13 +223,18 @@ class TestSessionWebhook(FrappeTestCase):
 				"amount": {"value": 1500, "currency": "TZS"},
 			},
 		}
-		with (
-			patch.object(webhooks.frappe.db, "get_value", return_value="PAY-COL-0001") as get_value,
-			patch.object(webhooks.frappe, "get_doc") as get_doc,
-			patch.object(webhooks, "process_inbound_webhook") as inbound,
-		):
-			webhooks.process_webhook(event)
+		get_value = frappe.db.get_value
 
-		get_value.assert_called_once_with("Payment Collection", {"snippe_reference": "sess_abc123"})
-		self.assertEqual(get_doc.call_args.args[0]["source_name"], "PAY-COL-0001")
+		def find_session(doctype, *args, **kwargs):
+			if doctype == "Payment Collection":
+				self.assertEqual(args, ({"company": TZS_COMPANY, "snippe_reference": "sess_abc123"},))
+				return "PAY-COL-0001"
+			return get_value(doctype, *args, **kwargs)
+
+		with patch.object(webhooks.frappe.db, "get_value", side_effect=find_session):
+			log = webhooks.make_payment_log(event, TZS_COMPANY)
+		with patch.object(webhooks, "process_inbound_webhook") as inbound:
+			webhooks.apply_event(log)
+
+		self.assertEqual(log.source_name, "PAY-COL-0001")
 		self.assertEqual(inbound.call_args.args[:2], ("PAY-COL-0001", "Completed"))

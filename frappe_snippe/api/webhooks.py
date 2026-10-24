@@ -1,37 +1,32 @@
 import json
 
 import frappe
+from erpnext import get_default_cost_center
 from frappe import _
 from frappe.utils import flt, get_url
 from snippe import WebhookHandler, WebhookVerificationError
 
-from frappe_snippe.api.client import PAYMENT_STATUS, PAYOUT_STATUS
+from frappe_snippe.api.client import PAYMENT_STATUS, PAYOUT_STATUS, get_snippe_setting
 
 PAYMENT_EVENTS = {
 	f"payment.{status}": PAYMENT_STATUS[status] for status in ("completed", "failed", "expired", "voided")
 }
 PAYOUT_EVENTS = {f"payout.{status}": PAYOUT_STATUS[status] for status in ("completed", "failed", "reversed")}
+EVENT_STATUS = {**PAYMENT_EVENTS, **PAYOUT_EVENTS}
 
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])  # nosemgrep
 def handle():
-	"""Verify a Snippe webhook and queue it for processing."""
-	settings = frappe.get_single("Snippe Settings")
-	if not settings.enabled:
+	"""Verify a Snippe webhook, keep it as a Payment Log and queue the log for processing."""
+	companies = frappe.get_all(
+		"Snippe Setting", or_filters={"enable_collection": 1, "enable_payouts": 1}, pluck="name"
+	)
+	if not companies:
 		return reject(403, "Integration disabled")
 
-	secret = settings.get_password("webhook_secret", raise_exception=False)
-	if not secret:
-		return reject(500, "Webhook secret not configured")
-
-	# verify_webhook() also parses the legacy flat payload, which rejects the 2026-01-25 envelope.
 	body = frappe.request.get_data()
 	try:
-		WebhookHandler(secret).verify_signature(
-			body,
-			frappe.get_request_header("X-Webhook-Signature"),
-			frappe.get_request_header("X-Webhook-Timestamp"),
-		)
+		company = verify_signature(body, companies)
 	except WebhookVerificationError as error:
 		return reject(401, error.message)
 
@@ -41,11 +36,42 @@ def handle():
 	):
 		return reject(400, "Malformed webhook payload")
 
+	if event_data["type"] not in EVENT_STATUS:
+		frappe.log_error(title="Unhandled Snippe webhook event", message=json.dumps(event_data, indent=2))
+		return {"status": "success"}
+
 	if frappe.db.exists("Payment Log", {"event_id": event_data["id"]}):
 		return {"status": "success", "message": "Already processed"}
 
-	frappe.enqueue("frappe_snippe.api.webhooks.process_webhook", event_data=event_data, queue="short")
+	# The log is saved before Snippe gets its 2xx, so a failed processing job cannot lose the event.
+	payment_log = make_payment_log(event_data, company).insert(ignore_permissions=True)
+	frappe.enqueue(
+		"frappe_snippe.api.webhooks.process_payment_log",
+		payment_log=payment_log.name,
+		queue="short",
+		enqueue_after_commit=True,
+	)
 	return {"status": "success"}
+
+
+def verify_signature(body: bytes, companies: list[str]) -> str:
+	"""Return the company whose Snippe account signed the webhook."""
+	signature = frappe.get_request_header("X-Webhook-Signature")
+	timestamp = frappe.get_request_header("X-Webhook-Timestamp")
+	last_error = WebhookVerificationError("Webhook secret not configured")
+	for company in companies:
+		secret = get_snippe_setting(company).get_password("webhook_secret", raise_exception=False)
+		if not secret:
+			continue
+
+		# verify_webhook() also parses the legacy flat payload, which rejects the 2026-01-25 envelope.
+		try:
+			WebhookHandler(secret).verify_signature(body, signature, timestamp)
+			return company
+		except WebhookVerificationError as error:
+			last_error = error
+
+	raise last_error
 
 
 def reject(status_code, message):
@@ -53,27 +79,27 @@ def reject(status_code, message):
 	return {"status": "error", "message": message}
 
 
-def process_webhook(event_data):
+def make_payment_log(event_data, company):
+	"""A Payment Log for an event from the company's Snippe account, linked to that company's document."""
 	event_type = event_data["type"]
-	new_status = PAYMENT_EVENTS.get(event_type) or PAYOUT_EVENTS.get(event_type)
-	if not new_status:
-		frappe.log_error(title="Unhandled Snippe webhook event", message=json.dumps(event_data, indent=2))
-		return
-
 	is_payment = event_type in PAYMENT_EVENTS
 	source_doctype = "Payment Collection" if is_payment else "Payment Disbursement"
 	payload = event_data["data"]
+	doc_name = None
 	metadata = payload.get("metadata") or {}
-	doc_name = metadata.get("erpnext_doc")
-	if not doc_name and is_payment and payload.get("session_reference"):
+	# Events for documents this company does not have stay unlinked; Snippe would otherwise retry them.
+	if metadata.get("erpnext_doc"):
+		doc_name = frappe.db.get_value(source_doctype, {"company": company, "name": metadata["erpnext_doc"]})
+	elif is_payment and payload.get("session_reference"):
 		# Snippe's documented session event sends session_reference but no metadata.
 		doc_name = frappe.db.get_value(
-			"Payment Collection", {"snippe_reference": payload["session_reference"]}
+			source_doctype, {"company": company, "snippe_reference": payload["session_reference"]}
 		)
 
-	frappe.get_doc(
+	return frappe.get_doc(
 		{
 			"doctype": "Payment Log",
+			"company": company,
 			"event_id": event_data["id"],
 			"event_type": event_type,
 			"direction": "Inbound" if is_payment else "Outbound",
@@ -85,24 +111,38 @@ def process_webhook(event_data):
 			"channel": (payload.get("channel") or {}).get("provider"),
 			"failure_reason": payload.get("failure_reason"),
 			"raw_payload": json.dumps(event_data, indent=2),
+			"processing_status": "Queued",
 		}
-	).insert(ignore_permissions=True)
+	)
 
-	if not doc_name:
+
+def process_payment_log(payment_log: str):
+	frappe.get_doc("Payment Log", payment_log).process()
+
+
+def apply_event(payment_log):
+	"""Move the log's Payment Collection or Payment Disbursement to the event's status."""
+	if not payment_log.source_name:
 		return
-	if is_payment:
-		process_inbound_webhook(doc_name, new_status, event_data["id"], payload)
+
+	payload = json.loads(payment_log.raw_payload)["data"]
+	new_status = EVENT_STATUS[payment_log.event_type]
+	if payment_log.direction == "Inbound":
+		process_inbound_webhook(payment_log.source_name, new_status, payment_log.event_id, payload)
 	else:
-		process_outbound_webhook(doc_name, new_status, payload, metadata)
+		process_outbound_webhook(payment_log.source_name, new_status, payload)
 
 
 def process_inbound_webhook(doc_name, new_status, event_id, payload):
+	"""Apply a payment status from a webhook, or from a status check when event_id is None."""
 	doc = frappe.get_doc("Payment Collection", doc_name, for_update=True)
 	# A completed collection already has a Payment Entry; later events must not undo it.
 	if doc.status in (new_status, "Completed"):
 		return
 
-	values = {"status": new_status, "snippe_event_id": event_id}
+	values = {"status": new_status}
+	if event_id:
+		values["snippe_event_id"] = event_id
 	if new_status == "Failed":
 		values["failure_reason"] = payload.get("failure_reason")
 	doc.db_set(values)
@@ -114,14 +154,23 @@ def process_inbound_webhook(doc_name, new_status, event_id, payload):
 
 	paid_amount = (payload.get("amount") or {}).get("value")
 	if not paid_amount:
-		frappe.throw(_("Snippe event {0} for {1} has no paid amount.").format(event_id, doc_name))
-	create_payment_entry(doc, paid_amount)
-	if frappe.db.get_single_value("Snippe Settings", "auto_create_sales_invoice"):
+		frappe.throw(_("Snippe reported {0} as paid but sent no paid amount.").format(doc_name))
+
+	settlement = payload.get("settlement")
+	if not settlement:
+		frappe.log_error(
+			title="Snippe fee not known",
+			message=f"Snippe sent no settlement for {doc_name}, so its Payment Entry has no fee. Book the fee by hand.",
+			reference_doctype="Payment Collection",
+			reference_name=doc_name,
+		)
+	create_payment_entry(doc, paid_amount, flt(((settlement or {}).get("fees") or {}).get("value")))
+	if get_snippe_setting(doc.company).auto_create_sales_invoice:
 		auto_create_sales_invoice(doc)
 
 
-def process_outbound_webhook(doc_name, new_status, payload, metadata):
-	row_id = metadata.get("row_id")
+def process_outbound_webhook(doc_name, new_status, payload):
+	row_id = (payload.get("metadata") or {}).get("row_id")
 	if not row_id:
 		return
 
@@ -133,9 +182,12 @@ def process_outbound_webhook(doc_name, new_status, payload, metadata):
 	doc.update_status()
 
 
-def create_payment_entry(collection_doc, paid_amount):
-	"""Post the amount Snippe received, allocated to references in row order."""
-	settings = frappe.get_single("Snippe Settings")
+def create_payment_entry(collection_doc, paid_amount, fee_amount=0):
+	"""Allocate the amount the customer paid to references in row order.
+
+	Snippe keeps its fee, so the Snippe account receives the net amount and the fee is a deduction.
+	"""
+	setting = get_snippe_setting(collection_doc.company)
 
 	pe = frappe.new_doc("Payment Entry")
 	pe.payment_type = "Receive"
@@ -144,14 +196,21 @@ def create_payment_entry(collection_doc, paid_amount):
 	pe.party_type = "Customer"
 	pe.party = collection_doc.customer
 
-	# Paid to is the Snippe account
-	if settings.snippe_bank_account:
-		pe.paid_to = settings.snippe_bank_account
-
-	pe.paid_amount = paid_amount
-	pe.received_amount = paid_amount
+	pe.paid_to = setting.get_account("collection_account")
+	pe.paid_amount = flt(paid_amount) - flt(fee_amount)
+	pe.received_amount = pe.paid_amount
 	pe.reference_no = collection_doc.snippe_reference
 	pe.reference_date = collection_doc.posting_date
+
+	if fee_amount:
+		pe.append(
+			"deductions",
+			{
+				"account": setting.get_account("fees_account"),
+				"cost_center": get_default_cost_center(collection_doc.company),
+				"amount": fee_amount,
+			},
+		)
 
 	allocations = collection_doc.get_reference_allocations(paid_amount)
 	for row, amount in allocations:

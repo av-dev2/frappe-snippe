@@ -2,8 +2,9 @@ from unittest.mock import MagicMock, patch
 
 import frappe
 from frappe.model.document import Document
-from frappe.tests.utils import FrappeTestCase
 from snippe import Payment
+
+from frappe_snippe.tests.test_snippe_setting import TZS_COMPANY, TzsCompanyTestCase, make_snippe_setting
 
 REDIRECT_URL = "https://shop.example/paid"
 
@@ -53,6 +54,7 @@ def make_collection(customer, payment_method="Mobile Money"):
 		{
 			"doctype": "Payment Collection",
 			"name": "PAY-COL-TEST",
+			"company": TZS_COMPANY,
 			"customer": customer.name,
 			"payment_method": payment_method,
 			"phone_number": "255712345678",
@@ -62,7 +64,7 @@ def make_collection(customer, payment_method="Mobile Money"):
 	)
 
 
-class CustomerTestCase(FrappeTestCase):
+class CustomerTestCase(TzsCompanyTestCase):
 	def setUp(self):
 		self.customer = make_customer()
 
@@ -110,10 +112,7 @@ class TestCollectionCustomer(CustomerTestCase):
 
 class TestCardReturnUrls(CustomerTestCase):
 	def set_urls(self, redirect_url, cancel_url=None):
-		settings = frappe.get_single("Snippe Settings")
-		settings.update({"card_redirect_url": redirect_url, "card_cancel_url": cancel_url})
-		settings.save()
-		return settings
+		return make_snippe_setting(card_redirect_url=redirect_url, card_cancel_url=cancel_url)
 
 	def test_missing_redirect_url_is_rejected(self):
 		with self.assertRaisesRegex(frappe.ValidationError, "Card Redirect URL"):

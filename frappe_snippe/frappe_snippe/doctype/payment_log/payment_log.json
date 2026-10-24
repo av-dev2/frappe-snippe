@@ -4,6 +4,7 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
+  "company",
   "event_id",
   "event_type",
   "direction",
@@ -16,10 +17,24 @@
   "amount",
   "channel",
   "failure_reason",
+  "processing_section",
+  "processing_status",
+  "processing_error",
   "raw_payload_section",
   "raw_payload"
  ],
  "fields": [
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company",
+   "read_only": 1,
+   "reqd": 1,
+   "in_standard_filter": 1,
+   "in_list_view": 1,
+   "description": "The company whose Snippe account sent the event."
+  },
   {
    "fieldname": "event_id",
    "fieldtype": "Data",
@@ -100,6 +115,28 @@
    "read_only": 1
   },
   {
+   "fieldname": "processing_section",
+   "fieldtype": "Section Break",
+   "label": "Processing"
+  },
+  {
+   "default": "Queued",
+   "fieldname": "processing_status",
+   "fieldtype": "Select",
+   "label": "Processing Status",
+   "options": "Queued\nProcessed\nFailed",
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "depends_on": "processing_error",
+   "fieldname": "processing_error",
+   "fieldtype": "Code",
+   "label": "Processing Error",
+   "read_only": 1
+  },
+  {
    "fieldname": "raw_payload_section",
    "fieldtype": "Section Break",
    "label": "Raw Payload"
@@ -114,7 +151,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-07-21 00:00:00.000000",
+ "modified": "2026-10-24 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Frappe Snippe",
  "name": "Payment Log",
@@ -125,14 +162,14 @@
    "delete": 0,
    "read": 1,
    "role": "System Manager",
-   "write": 0
+   "write": 1
   },
   {
    "create": 0,
    "delete": 0,
    "read": 1,
    "role": "Accounts Manager",
-   "write": 0
+   "write": 1
   }
  ],
  "sort_field": "modified",

@@ -13,6 +13,7 @@ from frappe_snippe.accounting.disbursement_entries import (
 	get_payable_line,
 	reverse_payout_booking,
 )
+from frappe_snippe.tests.test_snippe_setting import make_payout_setting
 
 COMPANY = "Wind Power LLC"
 CASH = "Cash - WP"
@@ -52,10 +53,9 @@ def make_disbursement(**row_values):
 
 
 def set_settings(auto_submit=1, fees_account=FEES):
-	frappe.db.set_single_value(
-		"Snippe Settings",
-		{"auto_submit_accounting_entries": auto_submit, "snippe_fees_account": fees_account},
-	)
+	setting = make_payout_setting(auto_submit_accounting_entries=auto_submit)
+	if not fees_account:
+		setting.db_set("fees_account", None)
 
 
 class InMemoryRowTestCase(FrappeTestCase):
@@ -171,6 +171,12 @@ class TestPayableLines(FrappeTestCase):
 			self.line_for("Salary Slip", [("EMP-1", None)])
 
 
+def loan_values(loan):
+	"""frappe.db.get_value stand-in that answers Loan lookups; others, like the Snippe Setting, read the database."""
+	get_value = frappe.db.get_value
+	return lambda doctype, *args, **kwargs: loan if doctype == "Loan" else get_value(doctype, *args, **kwargs)
+
+
 class TestCompletedPayoutBooking(FrappeTestCase):
 	def test_journal_entry_gets_payable_and_fee_lines(self):
 		set_settings()
@@ -197,7 +203,7 @@ class TestCompletedPayoutBooking(FrappeTestCase):
 	def test_fee_without_fees_account_is_rejected(self):
 		set_settings(fees_account=None)
 		disbursement = make_disbursement(fee_amount=350)
-		with self.assertRaisesRegex(frappe.ValidationError, "Snippe Fees Account"):
+		with self.assertRaisesRegex(frappe.ValidationError, "Fees Account"):
 			disbursement_entries.get_fee_lines(disbursement, disbursement.items[0])
 
 	def test_already_booked_row_is_not_booked_again(self):
@@ -216,7 +222,7 @@ class TestCompletedPayoutBooking(FrappeTestCase):
 		loan = frappe._dict(company=COMPANY, applicant_type="Employee", applicant="EMP-1")
 		with (
 			patch.dict(sys.modules, {LENDING_LOAN_MODULE: lending_loan}),
-			patch.object(disbursement_entries.frappe.db, "get_value", return_value=loan),
+			patch.object(disbursement_entries.frappe.db, "get_value", side_effect=loan_values(loan)),
 			patch.object(disbursement_entries, "save_entry", side_effect=lambda entry: entry),
 			patch.object(
 				disbursement_entries, "make_journal_entry", return_value=frappe._dict(name="JE-FEE")
@@ -318,15 +324,3 @@ class TestAccountingRetry(FrappeTestCase):
 		self.assertEqual(
 			[call.args[0].name for call in disbursement.book_item.call_args_list], ["row-1", "row-3"]
 		)
-
-
-class TestFeesAccountSetting(FrappeTestCase):
-	def test_fees_account_must_be_a_ledger_expense_account(self):
-		for account in (CASH, "Indirect Expenses - WP"):
-			settings = frappe.get_doc("Snippe Settings")
-			settings.snippe_fees_account = account
-			with self.assertRaises(frappe.ValidationError, msg=account):
-				settings.save()
-		settings = frappe.get_doc("Snippe Settings")
-		settings.snippe_fees_account = FEES
-		settings.save()

@@ -1,5 +1,12 @@
+// Each company's Snippe Setting flags, sent at login by frappe_snippe.api.client.extend_bootinfo.
+function when_snippe_enabled(frm, feature, add_button) {
+	if (frm.doc.docstatus === 1 && frappe.boot.snippe_features?.[frm.doc.company]?.[feature]) {
+		add_button();
+	}
+}
+
 function add_snippe_disbursement_button(frm, amount, default_channel) {
-	if (frm.doc.docstatus === 1) {
+	when_snippe_enabled(frm, "enable_payouts", () => {
 		// Need to check if a pending disbursement already exists
 		frappe.db.get_value(
 			"Payment Disbursement Item",
@@ -39,7 +46,7 @@ function add_snippe_disbursement_button(frm, amount, default_channel) {
 				}
 			}
 		);
-	}
+	});
 }
 
 frappe.ui.form.on("Purchase Invoice", {
@@ -81,7 +88,7 @@ frappe.ui.form.on("Expense Claim", {
 // Payroll Entry needs a special function to pull all unpaid Salary Slips
 frappe.ui.form.on("Payroll Entry", {
 	refresh: function (frm) {
-		if (frm.doc.docstatus === 1) {
+		when_snippe_enabled(frm, "enable_payouts", () => {
 			frm.add_custom_button(
 				__("Disburse via Snippe"),
 				function () {
@@ -123,6 +130,6 @@ frappe.ui.form.on("Payroll Entry", {
 				},
 				__("Create")
 			);
-		}
+		});
 	},
 });

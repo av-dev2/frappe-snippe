@@ -1,11 +1,17 @@
-from unittest.mock import MagicMock, patch
-
 import frappe
-from frappe.model.document import Document
 from frappe.tests.utils import FrappeTestCase
 
 from frappe_snippe.api import webhooks
 from frappe_snippe.tests.test_collection_customer import make_collection, make_customer
+from frappe_snippe.tests.test_snippe_setting import (
+	TZS_CASH,
+	TZS_COMPANY,
+	TZS_FEES,
+	TzsCompanyTestCase,
+	make_snippe_setting,
+)
+
+SERVICE_ITEM = "Snippe Test Service"
 
 
 def make_collection_with_references(*amounts, **values):
@@ -59,47 +65,112 @@ class TestReferenceAllocations(FrappeTestCase):
 		)
 
 
-@patch.object(Document, "db_set")
-class TestPaymentEntryAmount(FrappeTestCase):
-	def post(self, collection, paid_amount):
-		payment_entry = MagicMock(name="PE-0001")
-		payment_entry.name = "PE-0001"
-		with (
-			patch.object(webhooks.frappe, "new_doc", return_value=payment_entry),
-			patch.object(
-				webhooks.frappe, "get_single", return_value=frappe._dict(snippe_bank_account="Snippe - TC")
-			),
-		):
-			webhooks.create_payment_entry(collection, paid_amount)
-		return payment_entry
+def make_sales_invoice(customer, rate):
+	if not frappe.db.exists("Item", SERVICE_ITEM):
+		frappe.get_doc(
+			{
+				"doctype": "Item",
+				"item_code": SERVICE_ITEM,
+				"item_group": "All Item Groups",
+				"stock_uom": "Nos",
+				"is_stock_item": 0,
+			}
+		).insert()
 
-	def test_payment_entry_posts_amount_actually_paid(self, db_set):
-		collection = make_collection_with_references(100000, 50000)
-		payment_entry = self.post(collection, 120000)
+	invoice = frappe.get_doc(
+		{
+			"doctype": "Sales Invoice",
+			"company": TZS_COMPANY,
+			"customer": customer,
+			"currency": "TZS",
+			"selling_price_list": None,
+			"items": [{"item_code": SERVICE_ITEM, "qty": 1, "rate": rate}],
+		}
+	)
+	invoice.insert()
+	invoice.submit()
+	return invoice
 
-		self.assertEqual((payment_entry.paid_amount, payment_entry.received_amount), (120000, 120000))
-		references = [call.args[1] for call in payment_entry.append.call_args_list]
+
+class TestPaymentEntryBooking(TzsCompanyTestCase):
+	"""Posts real Payment Entries against real Sales Invoices of the TZS test company."""
+
+	def setUp(self):
+		self.customer = make_customer().name
+		self.setting = make_snippe_setting()
+
+	def make_paid_collection(self, *rates):
+		return frappe.get_doc(
+			{
+				"doctype": "Payment Collection",
+				"company": TZS_COMPANY,
+				"customer": self.customer,
+				"posting_date": frappe.utils.nowdate(),
+				"payment_method": "Mobile Money",
+				"phone_number": "0712345678",
+				"snippe_reference": "pi_ref",
+				"references": [
+					{
+						"reference_doctype": "Sales Invoice",
+						"reference_name": make_sales_invoice(self.customer, rate).name,
+						"allocated_amount": rate,
+					}
+					for rate in rates
+				],
+			}
+		).insert()
+
+	def get_gl_lines(self, payment_entry):
+		return {
+			(entry.account, entry.debit, entry.credit)
+			for entry in frappe.get_all(
+				"GL Entry",
+				filters={"voucher_no": payment_entry, "is_cancelled": 0},
+				fields=["account", "debit", "credit"],
+			)
+		}
+
+	def test_snippe_fee_is_booked_and_invoice_is_fully_paid(self):
+		collection = self.make_paid_collection(50000)
+		webhooks.create_payment_entry(collection, 50000, 1000)
+
+		row = collection.references[0]
+		self.assertEqual(row.status, "Paid")
 		self.assertEqual(
-			[(row["reference_name"], row["allocated_amount"]) for row in references],
-			[("SINV-0001", 100000), ("SINV-0002", 20000)],
+			self.get_gl_lines(row.payment_entry),
+			{("Debtors - STZ", 0, 50000), (TZS_CASH, 49000, 0), (TZS_FEES, 1000, 0)},
 		)
-		payment_entry.submit.assert_called_once()
+		self.assertEqual(frappe.db.get_value("Sales Invoice", row.reference_name, "outstanding_amount"), 0)
 
-	def test_only_fully_covered_references_are_marked_paid(self, db_set):
-		collection = make_collection_with_references(100000, 50000, 30000)
-		self.post(collection, 120000)
+	def test_short_payment_fills_references_in_row_order(self):
+		collection = self.make_paid_collection(100000, 50000, 30000)
+		webhooks.create_payment_entry(collection, 120000)
+
 		self.assertEqual(
-			[call.args[0] for call in db_set.call_args_list],
-			[
-				{"payment_entry": "PE-0001", "status": "Paid"},
-				{"payment_entry": "PE-0001", "status": "Pending"},
-			],
+			[(row.status, row.payment_entry is not None) for row in collection.references],
+			[("Paid", True), ("Pending", True), ("Pending", False)],
 		)
+		outstanding = [
+			frappe.db.get_value("Sales Invoice", row.reference_name, "outstanding_amount")
+			for row in collection.references
+		]
+		self.assertEqual(outstanding, [0, 30000, 30000])
+
+	def test_fee_without_fees_account_is_rejected(self):
+		self.setting.db_set("fees_account", None)
+		with self.assertRaisesRegex(frappe.ValidationError, "Fees Account"):
+			webhooks.create_payment_entry(self.make_paid_collection(50000), 50000, 1000)
+
+	def test_company_without_gl_account_is_rejected(self):
+		self.setting.db_set("collection_account", None)
+		with self.assertRaisesRegex(frappe.ValidationError, "Collection Account"):
+			webhooks.create_payment_entry(self.make_paid_collection(50000), 50000)
 
 
-class TestCustomAmountCollection(FrappeTestCase):
+class TestCustomAmountCollection(TzsCompanyTestCase):
 	def setUp(self):
 		self.customer = make_customer()
+		make_snippe_setting()
 
 	def test_custom_amount_limits_reach_the_session(self):
 		collection = make_collection(self.customer, "Hosted Session")

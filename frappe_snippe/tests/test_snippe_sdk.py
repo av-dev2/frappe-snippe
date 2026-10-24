@@ -5,11 +5,18 @@ from frappe.model.document import Document
 from frappe.tests.utils import FrappeTestCase
 from snippe import Customer, NotFoundError, Payment, Payout, RateLimitError, ServerError, ValidationError
 
-from frappe_snippe.api.client import new_idempotency_key, normalize_phone, to_snippe_amount
+from frappe_snippe import tasks as reconcile_tasks
+from frappe_snippe.api.client import (
+	BACKGROUND_RATE_LIMIT_WAITS,
+	new_idempotency_key,
+	normalize_phone,
+	to_snippe_amount,
+)
 from frappe_snippe.frappe_snippe.doctype.payment_disbursement.payment_disbursement import (
 	process_disbursement_queue,
 )
 from frappe_snippe.tasks import reconcile_pending_disbursements
+from frappe_snippe.tests.test_webhooks import set_args
 
 COLLECTION_MODULE = "frappe_snippe.frappe_snippe.doctype.payment_collection.payment_collection"
 DISBURSEMENT_MODULE = "frappe_snippe.frappe_snippe.doctype.payment_disbursement.payment_disbursement"
@@ -49,9 +56,15 @@ def make_collection(payment_method="Mobile Money"):
 	)
 
 
-def make_disbursement(items):
+def make_disbursement(items, **values):
 	return frappe.get_doc(
-		{"doctype": "Payment Disbursement", "name": "PAY-DIS-TEST", "narration": "Salary", "items": items}
+		{
+			"doctype": "Payment Disbursement",
+			"name": "PAY-DIS-TEST",
+			"narration": "Salary",
+			"items": items,
+			**values,
+		}
 	)
 
 
@@ -99,10 +112,10 @@ class TestPaymentCollectionSdk(FrappeTestCase):
 	def run_collection(self, collection, client):
 		client.__enter__.return_value = client
 		# Customer and card URL lookups are covered in test_collection_customer.
-		settings = frappe._dict(get_card_return_urls=lambda: {"redirect_url": "https://shop.example/paid"})
+		setting = frappe._dict(get_card_return_urls=lambda: {"redirect_url": "https://shop.example/paid"})
 		with (
 			patch(f"{COLLECTION_MODULE}.get_snippe_client", return_value=client),
-			patch(f"{COLLECTION_MODULE}.frappe.get_cached_doc", return_value=settings),
+			patch(f"{COLLECTION_MODULE}.get_snippe_setting", return_value=setting),
 			patch.object(collection, "get_snippe_customer", return_value=Customer("Asha", "Juma Mrisho")),
 		):
 			collection.process_collection()
@@ -144,7 +157,8 @@ class TestPaymentCollectionSdk(FrappeTestCase):
 		collection = make_collection()
 		collection.phone_number = "0712 345 678"
 		collection.idempotency_key = "9b2f6c1e-4d1a-4f5e-9a63-0c7b5d1e2f3a"
-		collection.validate()
+		with patch(f"{COLLECTION_MODULE}.get_snippe_setting"):
+			collection.validate()
 		self.assertEqual(collection.phone_number, "255712345678")
 		self.assertLessEqual(len(collection.idempotency_key), 30)
 
@@ -152,14 +166,17 @@ class TestPaymentCollectionSdk(FrappeTestCase):
 @patch.object(Document, "db_set")
 class TestPaymentDisbursementSdk(FrappeTestCase):
 	def run_queue(self, disbursement, client):
+		client.__enter__.return_value = client
 		with (
 			patch(f"{DISBURSEMENT_MODULE}.frappe.get_doc", return_value=disbursement),
-			patch(f"{DISBURSEMENT_MODULE}.frappe.get_single", return_value=frappe._dict()),
-			patch(f"{DISBURSEMENT_MODULE}.get_snippe_client", return_value=client),
+			patch(f"{DISBURSEMENT_MODULE}.get_snippe_setting", return_value=frappe._dict()),
+			patch(f"{DISBURSEMENT_MODULE}.get_snippe_client", return_value=client) as get_client,
+			patch.object(frappe.db, "commit") as commit,
 			# Accounting is covered in test_disbursement_accounting.
 			patch.object(disbursement, "book_item"),
 		):
 			process_disbursement_queue("PAY-DIS-TEST")
+		return get_client, commit
 
 	def test_mobile_and_bank_payouts_use_sdk_calls(self, db_set):
 		disbursement = make_disbursement(
@@ -200,10 +217,23 @@ class TestPaymentDisbursementSdk(FrappeTestCase):
 		)
 		self.assertEqual(client.create_mobile_payout.call_count, 2)
 
-	def test_rate_limit_stops_batch_and_keeps_rows_pending(self, db_set):
+	def test_batch_client_waits_out_the_rate_limit(self, db_set):
+		get_client, _commit = self.run_queue(
+			make_disbursement([mobile_item()], company="Test Company"), MagicMock()
+		)
+		get_client.assert_called_once_with("Test Company", BACKGROUND_RATE_LIMIT_WAITS)
+
+	def test_each_sent_or_failed_row_is_committed(self, db_set):
 		disbursement = make_disbursement([mobile_item(), mobile_item(name="row-2")])
 		client = MagicMock()
-		client.create_mobile_payout.side_effect = RateLimitError("Slow down", 429)
+		client.create_mobile_payout.side_effect = [make_payout(), ValidationError("Bad account", 400)]
+		_get_client, commit = self.run_queue(disbursement, client)
+		self.assertEqual(commit.call_count, 2)
+
+	def test_lasting_rate_limit_stops_batch_and_keeps_rows_pending(self, db_set):
+		disbursement = make_disbursement([mobile_item(), mobile_item(name="row-2")])
+		client = MagicMock()
+		client.create_mobile_payout.side_effect = RateLimitError("Too many requests", 429)
 		with patch(f"{DISBURSEMENT_MODULE}.frappe.log_error") as log_error:
 			self.run_queue(disbursement, client)
 
@@ -247,8 +277,9 @@ class TestPaymentDisbursementSdk(FrappeTestCase):
 @patch.object(Document, "db_set")
 class TestReconcilePayouts(FrappeTestCase):
 	def run_reconcile(self, disbursement, client):
+		client.__enter__.return_value = client
 		with (
-			patch("frappe_snippe.tasks.frappe.get_all", return_value=[frappe._dict(name="PAY-DIS-TEST")]),
+			patch("frappe_snippe.tasks.frappe.get_all", return_value=["PAY-DIS-TEST"]),
 			patch("frappe_snippe.tasks.frappe.get_doc", return_value=disbursement),
 			patch("frappe_snippe.tasks.get_snippe_client", return_value=client),
 			patch.object(disbursement, "book_item"),
@@ -264,9 +295,8 @@ class TestReconcilePayouts(FrappeTestCase):
 		self.run_reconcile(disbursement, client)
 
 		self.assertEqual(client.get_payout.call_args_list[0].args, ("po_1",))
-		set_values = [call.args for call in db_set.call_args_list]
-		self.assertIn(({"status": "Reversed", "failure_reason": "Wallet closed"},), set_values)
-		self.assertIn(({"status": "Completed"},), set_values)
+		self.assertIn(({"status": "Reversed", "failure_reason": "Wallet closed"},), set_args(db_set))
+		self.assertIn(({"status": "Completed"},), set_args(db_set))
 
 	def test_sdk_error_skips_only_that_payout(self, db_set):
 		disbursement = make_disbursement(
@@ -285,3 +315,55 @@ class TestReconcilePayouts(FrappeTestCase):
 			({"status": "Failed", "failure_reason": "Rejected"},),
 			[call.args for call in db_set.call_args_list],
 		)
+
+
+@patch.object(Document, "db_set")
+class TestPayoutResume(FrappeTestCase):
+	def hours_ago(self, hours):
+		return frappe.utils.add_to_date(None, hours=-hours)
+
+	def test_submit_queues_one_resumable_batch(self, db_set):
+		disbursement = make_disbursement([mobile_item()])
+		with patch(f"{DISBURSEMENT_MODULE}.frappe.enqueue") as enqueue:
+			disbursement.on_submit()
+
+		self.assertEqual(db_set.call_args.args[0]["status"], "Processing")
+		self.assertIsNotNone(db_set.call_args.args[0]["queued_on"])
+		kwargs = enqueue.call_args.kwargs
+		self.assertEqual(
+			(kwargs["queue"], kwargs["job_id"], kwargs["deduplicate"], kwargs["enqueue_after_commit"]),
+			("long", "snippe_payouts::PAY-DIS-TEST", True, True),
+		)
+
+	def test_unsent_rows_are_resent_within_the_idempotency_window(self, db_set):
+		disbursement = make_disbursement([mobile_item()], queued_on=self.hours_ago(5))
+		with patch.object(disbursement, "queue_payouts") as queue_payouts:
+			disbursement.resume_unsent_payouts()
+
+		queue_payouts.assert_called_once()
+		db_set.assert_not_called()
+
+	def test_unsent_rows_fail_once_a_resend_could_pay_twice(self, db_set):
+		disbursement = make_disbursement(
+			[mobile_item(), mobile_item(name="row-2", snippe_reference="po_sent")],
+			queued_on=self.hours_ago(21),
+		)
+		with patch.object(disbursement, "queue_payouts") as queue_payouts:
+			disbursement.resume_unsent_payouts()
+
+		queue_payouts.assert_not_called()
+		failed = [args[0] for args in set_args(db_set) if isinstance(args[0], dict)]
+		self.assertEqual(len(failed), 1)
+		self.assertEqual(failed[0]["status"], "Failed")
+		self.assertIn("Check the Snippe dashboard", failed[0]["failure_reason"])
+
+	def test_hourly_job_resumes_each_stopped_disbursement(self, db_set):
+		disbursement = MagicMock()
+		with (
+			patch("frappe_snippe.tasks.frappe.get_all", return_value=["PAY-DIS-TEST"]) as get_all,
+			patch("frappe_snippe.tasks.frappe.get_doc", return_value=disbursement),
+		):
+			reconcile_tasks.resume_unsent_payouts()
+
+		disbursement.resume_unsent_payouts.assert_called_once()
+		self.assertIn(["queued_on", "is", "set"], get_all.call_args.kwargs["filters"])

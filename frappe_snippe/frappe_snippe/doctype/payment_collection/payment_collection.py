@@ -11,12 +11,15 @@ from snippe import Customer
 from frappe_snippe.api.client import (
 	PAYMENT_STATUS,
 	SESSION_STATUS,
+	SNIPPE_CURRENCY,
 	get_snippe_client,
+	get_snippe_setting,
 	is_valid_idempotency_key,
 	new_idempotency_key,
 	normalize_phone,
 	snippe_errors_as_messages,
 	to_snippe_amount,
+	validate_rows_currency,
 	whole_tzs,
 )
 from frappe_snippe.api.webhooks import get_webhook_url
@@ -28,6 +31,8 @@ class PaymentCollection(Document):
 		self.total_amount = sum(row.allocated_amount for row in self.references)
 
 	def validate(self):
+		if self.company:
+			get_snippe_setting(self.company).validate_collection_enabled()
 		if not is_valid_idempotency_key(self.idempotency_key):
 			self.idempotency_key = new_idempotency_key()
 		if self.phone_number:
@@ -35,12 +40,14 @@ class PaymentCollection(Document):
 		if self.allow_custom_amount and self.payment_method != "Hosted Session":
 			frappe.throw(_("Allow Custom Amount works only with the Hosted Session payment method."))
 
+		validate_rows_currency(self.references)
+
 	def on_submit(self):
 		self.process_collection()
 
 	def on_cancel(self):
 		if self.payment_method == "Hosted Session" and self.status == "Pending" and self.snippe_reference:
-			with get_snippe_client() as client, snippe_errors_as_messages():
+			with get_snippe_client(self.company) as client, snippe_errors_as_messages():
 				client.cancel_session(self.snippe_reference)
 			self.db_set("status", "Voided")
 
@@ -49,7 +56,7 @@ class PaymentCollection(Document):
 		if not is_session and not self.phone_number:
 			frappe.throw(_("Phone Number is required for {0}.").format(_(self.payment_method)))
 
-		with get_snippe_client() as client, snippe_errors_as_messages():
+		with get_snippe_client(self.company) as client, snippe_errors_as_messages():
 			values = self.create_session(client) if is_session else self.create_payment(client)
 		self.db_set(values)
 
@@ -58,17 +65,17 @@ class PaymentCollection(Document):
 
 	def create_session(self, client):
 		"""Open a Snippe hosted checkout for the collection total."""
-		settings = frappe.get_cached_doc("Snippe Settings")
+		setting = get_snippe_setting(self.company)
 		session = client.create_session(
 			to_snippe_amount(self.total_amount),
 			description=_("Payment for {0}").format(self.name),
 			customer=self.get_session_customer(),
 			line_items=self.get_session_line_items(),
 			display={"show_line_items": True},
-			redirect_url=settings.session_redirect_url or None,
+			redirect_url=setting.session_redirect_url or None,
 			webhook_url=get_webhook_url(),
 			metadata={"erpnext_doc": self.name, "company": self.company},
-			expires_in=cint(settings.session_expiry_minutes) * 60 or None,
+			expires_in=cint(setting.session_expiry_minutes) * 60 or None,
 			idempotency_key=self.idempotency_key,
 			**self.get_custom_amount_limits(),
 		)
@@ -79,6 +86,21 @@ class PaymentCollection(Document):
 			"checkout_url": session["checkout_url"],
 			"payment_link_url": session.get("payment_link_url") or session["checkout_url"],
 		}
+
+	def get_snippe_update(self, client) -> tuple[str, dict]:
+		"""Snippe's current status and a webhook-shaped payload, for a collection whose webhook never came."""
+		if self.payment_method != "Hosted Session":
+			payment = client.get_payment_data(self.snippe_reference)
+			return PAYMENT_STATUS.get(payment["status"], "Pending"), payment
+
+		session = client.get_session(self.snippe_reference)
+		# A custom-amount session reports the suggested amount, not what the customer paid.
+		amount = (
+			None
+			if self.allow_custom_amount
+			else {"value": session["amount"], "currency": session["currency"]}
+		)
+		return SESSION_STATUS.get(session["status"], "Pending"), {"amount": amount}
 
 	def get_custom_amount_limits(self):
 		if not self.allow_custom_amount:
@@ -124,7 +146,7 @@ class PaymentCollection(Document):
 	def create_payment(self, client):
 		payment_kwargs = {
 			"amount": to_snippe_amount(self.total_amount),
-			"currency": "TZS",
+			"currency": SNIPPE_CURRENCY,
 			"phone_number": self.phone_number,
 			"customer": self.get_snippe_customer(),
 			"metadata": {"erpnext_doc": self.name, "company": self.company},
@@ -134,7 +156,7 @@ class PaymentCollection(Document):
 		if self.payment_method == "Mobile Money":
 			payment = client.create_mobile_payment(**payment_kwargs)
 		elif self.payment_method == "Card":
-			card_return_urls = frappe.get_cached_doc("Snippe Settings").get_card_return_urls()
+			card_return_urls = get_snippe_setting(self.company).get_card_return_urls()
 			payment = client.create_card_payment(**card_return_urls, **payment_kwargs)
 		else:
 			payment = client.create_qr_payment(**payment_kwargs)

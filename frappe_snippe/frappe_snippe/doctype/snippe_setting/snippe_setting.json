@@ -1,0 +1,201 @@
+{
+ "actions": [],
+ "autoname": "field:company",
+ "creation": "2026-07-21 00:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "company",
+  "api_key",
+  "column_break_hyyi",
+  "webhook_secret",
+  "column_break_company",
+  "enable_collection",
+  "enable_payouts",
+  "account_section",
+  "collection_account",
+  "column_break_account",
+  "fees_account",
+  "column_break_hbdu",
+  "auto_create_sales_invoice",
+  "auto_submit_accounting_entries",
+  "collection_section",
+  "session_redirect_url",
+  "session_expiry_minutes",
+  "column_break_collection",
+  "card_redirect_url",
+  "card_cancel_url",
+  "column_break_lehc",
+  "default_narration"
+ ],
+ "fields": [
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Company",
+   "options": "Company",
+   "reqd": 1,
+   "set_only_once": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "column_break_company",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "enable_collection",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Enable Collection"
+  },
+  {
+   "default": "0",
+   "fieldname": "enable_payouts",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Enable Payouts"
+  },
+  {
+   "depends_on": "eval:doc.enable_collection || doc.enable_payouts",
+   "fieldname": "account_section",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "api_key",
+   "fieldtype": "Password",
+   "label": "API Key",
+   "mandatory_depends_on": "eval:doc.enable_collection || doc.enable_payouts"
+  },
+  {
+   "fieldname": "webhook_secret",
+   "fieldtype": "Password",
+   "label": "Webhook Key",
+   "mandatory_depends_on": "eval:doc.enable_collection || doc.enable_payouts"
+  },
+  {
+   "fieldname": "column_break_account",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "enable_collection",
+   "description": "TZS Bank or Cash account that receives the money customers pay through Snippe.",
+   "fieldname": "collection_account",
+   "fieldtype": "Link",
+   "label": "Collection Account",
+   "mandatory_depends_on": "enable_collection",
+   "options": "Account"
+  },
+  {
+   "description": "Expense account for the fees Snippe charges on collections and payouts",
+   "fieldname": "fees_account",
+   "fieldtype": "Link",
+   "label": "Fees Account",
+   "mandatory_depends_on": "eval:doc.enable_collection || doc.enable_payouts",
+   "options": "Account"
+  },
+  {
+   "fieldname": "collection_section",
+   "fieldtype": "Section Break"
+  },
+  {
+   "default": "60",
+   "depends_on": "enable_collection",
+   "description": "How long a hosted checkout link stays open, from 1 to 1440 minutes. Snippe uses 60 minutes when empty.",
+   "fieldname": "session_expiry_minutes",
+   "fieldtype": "Int",
+   "label": "Session Expiry (Minutes)"
+  },
+  {
+   "depends_on": "enable_collection",
+   "description": "Page the customer returns to after paying on the hosted checkout. Snippe shows its own success page when empty.",
+   "fieldname": "session_redirect_url",
+   "fieldtype": "Data",
+   "label": "Session Redirect URL",
+   "options": "URL"
+  },
+  {
+   "default": "0",
+   "depends_on": "enable_collection",
+   "fieldname": "auto_create_sales_invoice",
+   "fieldtype": "Check",
+   "label": "Auto-create Sales Invoice from Sales Order"
+  },
+  {
+   "fieldname": "column_break_collection",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "enable_collection",
+   "description": "Page the customer returns to after a successful card payment. Required for card collections.",
+   "fieldname": "card_redirect_url",
+   "fieldtype": "Data",
+   "label": "Card Redirect URL",
+   "options": "URL"
+  },
+  {
+   "depends_on": "enable_collection",
+   "description": "Page the customer returns to after cancelling a card payment. Uses the Card Redirect URL when empty.",
+   "fieldname": "card_cancel_url",
+   "fieldtype": "Data",
+   "label": "Card Cancel URL",
+   "options": "URL"
+  },
+  {
+   "default": "Payment via Snippe",
+   "depends_on": "enable_payouts",
+   "description": "Default narration shown on recipient's mobile/bank statement for disbursements",
+   "fieldname": "default_narration",
+   "fieldtype": "Small Text",
+   "label": "Default Payout Narration"
+  },
+  {
+   "default": "0",
+   "depends_on": "enable_payouts",
+   "fieldname": "auto_submit_accounting_entries",
+   "fieldtype": "Check",
+   "label": "Auto Submit Accounting Entries"
+  },
+  {
+   "fieldname": "column_break_hyyi",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_hbdu",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_lehc",
+   "fieldtype": "Column Break"
+  }
+ ],
+ "links": [],
+ "modified": "2026-10-24 10:16:32.143322",
+ "modified_by": "Administrator",
+ "module": "Frappe Snippe",
+ "name": "Snippe Setting",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  },
+  {
+   "create": 1,
+   "read": 1,
+   "role": "Accounts Manager",
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "company",
+ "track_changes": 1
+}

@@ -1,1 +1,22 @@
-[]
+[
+  {
+    "dt": "Bank",
+    "fieldname": "bank_code",
+    "label": "Bank Code",
+    "fieldtype": "Data",
+    "reqd": 1,
+    "insert_after": "column_break_1",
+    "in_list_view": 1,
+    "in_standard_filter": 1
+  },
+  {
+    "dt": "Employee",
+    "fieldname": "bank_code",
+    "label": "Bank Code",
+    "fieldtype": "Data",
+    "insert_after": "bank_ac_no",
+    "depends_on": "eval:doc.salary_mode == 'Bank'",
+    "mandatory_depends_on": "eval:doc.salary_mode == 'Bank' && doc.bank_ac_no",
+    "description": "Bank Code of the employee's Bank"
+  }
+]

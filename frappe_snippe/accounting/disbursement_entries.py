@@ -3,7 +3,7 @@ from erpnext import get_default_cost_center
 from frappe import _
 from frappe.utils import nowdate
 
-from frappe_snippe.api.client import whole_tzs
+from frappe_snippe.api.client import get_snippe_setting, whole_tzs
 
 # reference doctype -> (payable account field, party type, party field)
 PAYABLE_SOURCES = {
@@ -104,12 +104,9 @@ def get_payable_line(row):
 def get_fee_lines(disbursement, row):
 	if not row.fee_amount:
 		return []
-	fees_account = frappe.db.get_single_value("Snippe Settings", "snippe_fees_account")
-	if not fees_account:
-		frappe.throw(_("Set the Snippe Fees Account in Snippe Settings to book payout fees."))
 	return [
 		{
-			"account": fees_account,
+			"account": get_snippe_setting(disbursement.company).get_account("fees_account"),
 			"cost_center": get_default_cost_center(disbursement.company),
 			"debit_in_account_currency": row.fee_amount,
 		}
@@ -201,6 +198,6 @@ def delete_draft(entry):
 
 def save_entry(entry):
 	entry.insert(ignore_permissions=True)
-	if frappe.db.get_single_value("Snippe Settings", "auto_submit_accounting_entries"):
+	if get_snippe_setting(entry.company).auto_submit_accounting_entries:
 		entry.submit()
 	return entry

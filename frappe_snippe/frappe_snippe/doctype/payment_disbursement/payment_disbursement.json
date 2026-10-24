@@ -24,6 +24,7 @@
   "status_section",
   "status",
   "hidden_section",
+  "queued_on",
   "last_status_check",
   "retry_count"
  ],
@@ -163,6 +164,14 @@
    "hidden": 1
   },
   {
+   "fieldname": "queued_on",
+   "fieldtype": "Datetime",
+   "label": "Queued On",
+   "read_only": 1,
+   "hidden": 1,
+   "description": "When the payouts were first queued. Unsent rows are resent only while Snippe still recognises their idempotency keys."
+  },
+  {
    "fieldname": "last_status_check",
    "fieldtype": "Datetime",
    "label": "Last Status Check",
@@ -182,7 +191,7 @@
  "is_submittable": 1,
  "autoname": "naming_series:",
  "links": [],
- "modified": "2026-10-06 21:00:00.000000",
+ "modified": "2026-10-24 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Frappe Snippe",
  "name": "Payment Disbursement",

@@ -1,70 +1,140 @@
 from collections import defaultdict
 
 import frappe
-from frappe.utils import now_datetime
-from snippe import AuthenticationError, ConflictError, NotFoundError, RateLimitError, ValidationError
+from frappe.utils import add_to_date, now_datetime
+from snippe import RateLimitError, SnippeError
 
-from frappe_snippe.api.client import PAYOUT_STATUS, get_snippe_client
+from frappe_snippe.api.client import BACKGROUND_RATE_LIMIT_WAITS, PAYOUT_STATUS, get_snippe_client
+from frappe_snippe.api.webhooks import process_inbound_webhook
 
 RETRY_FILTERS = (
 	{"docstatus": 1, "status": "Completed", "accounting_status": ("is", "not set")},
 	{"docstatus": 1, "status": "Reversed", "accounting_status": "Booked"},
 )
+# A webhook job normally runs within seconds; older queued logs lost their job.
+STALE_LOG_MINUTES = 10
 
 
 def hourly():
+	process_stale_payment_logs()
+	reconcile_pending_collections()
 	reconcile_pending_disbursements()
+	resume_unsent_payouts()
 	book_missing_payout_accounting()
 
 
+def run_for_each(doctype, names, method, error_title):
+	"""Call method with each document; a failure is rolled back and logged, and the rest still run.
+
+	Snippe's rate limit stops the run, as every further call would fail too; the next run continues.
+	"""
+	for name in names:
+		frappe.db.savepoint("snippe_hourly")
+		try:
+			method(frappe.get_doc(doctype, name))
+		except RateLimitError:
+			frappe.db.rollback(save_point="snippe_hourly")
+			frappe.log_error(
+				title="Snippe rate limit reached", reference_doctype=doctype, reference_name=name
+			)
+			return
+		except Exception:
+			frappe.db.rollback(save_point="snippe_hourly")
+			frappe.log_error(title=error_title, reference_doctype=doctype, reference_name=name)
+
+
+def process_stale_payment_logs():
+	"""Process webhook logs whose queued job never ran, for example after a worker restart."""
+	names = frappe.get_all(
+		"Payment Log",
+		filters={
+			"processing_status": "Queued",
+			"creation": ("<", add_to_date(now_datetime(), minutes=-STALE_LOG_MINUTES)),
+		},
+		pluck="name",
+	)
+	for name in names:
+		frappe.get_doc("Payment Log", name).process()
+
+
+def reconcile_pending_collections():
+	"""Apply Snippe's status to collections whose webhook never arrived."""
+	names = frappe.get_all(
+		"Payment Collection",
+		filters={"docstatus": 1, "status": "Pending", "snippe_reference": ("is", "set")},
+		pluck="name",
+	)
+	run_for_each("Payment Collection", names, reconcile_collection, "Snippe collection status check failed")
+
+
+def reconcile_collection(collection):
+	with get_snippe_client(collection.company, BACKGROUND_RATE_LIMIT_WAITS) as client:
+		status, payload = collection.get_snippe_update(client)
+
+	if status != "Pending":
+		process_inbound_webhook(collection.name, status, None, payload)
+
+
 def reconcile_pending_disbursements():
-	"""
-	Check pending payment disbursements and sync their statuses if they've been
-	stuck in Processing/Pending for too long.
-	"""
-	pending_docs = frappe.get_all(
+	"""Apply Snippe's status to sent payouts whose webhook never arrived."""
+	names = frappe.get_all(
 		"Payment Disbursement",
 		filters={"status": ("in", ["Processing", "Partially Completed"])},
-		fields=["name"],
+		pluck="name",
 	)
+	run_for_each("Payment Disbursement", names, reconcile_disbursement, "Snippe payout status check failed")
 
-	if not pending_docs:
-		return
 
-	client = get_snippe_client()
+def reconcile_disbursement(disbursement):
+	updated = False
+	with get_snippe_client(disbursement.company, BACKGROUND_RATE_LIMIT_WAITS) as client:
+		for item in disbursement.items:
+			if item.status != "Pending" or not item.snippe_reference:
+				continue
 
-	for doc in pending_docs:
-		pd = frappe.get_doc("Payment Disbursement", doc.name)
-		updated = False
+			try:
+				response = client.get_payout(item.snippe_reference)
+			except RateLimitError:
+				raise
+			except SnippeError as e:
+				frappe.log_error(
+					title="Snippe payout reconcile failed",
+					message=f"Payout {item.snippe_reference}: {e.message}",
+					reference_doctype="Payment Disbursement",
+					reference_name=disbursement.name,
+				)
+				continue
 
-		for item in pd.items:
-			if item.status == "Pending" and item.snippe_reference:
-				try:
-					response = client.get_payout(item.snippe_reference)
-				except (
-					NotFoundError,
-					ValidationError,
-					ConflictError,
-					RateLimitError,
-					AuthenticationError,
-				) as e:
-					frappe.log_error(
-						title="Snippe payout reconcile failed",
-						message=f"Payout {item.snippe_reference}: {e.message}",
-						reference_doctype="Payment Disbursement",
-						reference_name=pd.name,
-					)
-					continue
+			new_status = PAYOUT_STATUS.get(response.status, "Pending")
+			if new_status != item.status:
+				disbursement.set_item_status(item, new_status, response.failure_reason)
+				updated = True
 
-				new_status = PAYOUT_STATUS.get(response.status, "Pending")
-				if new_status != item.status:
-					pd.set_item_status(item, new_status, response.failure_reason)
-					updated = True
+	if updated:
+		disbursement.update_status()
 
-		if updated:
-			pd.update_status()
+	disbursement.db_set("last_status_check", now_datetime())
 
-		pd.db_set("last_status_check", now_datetime())
+
+def resume_unsent_payouts():
+	"""Restart payout batches that stopped, for example on Snippe's rate limit or a network error."""
+	names = frappe.get_all(
+		"Payment Disbursement",
+		filters=[
+			["docstatus", "=", 1],
+			["queued_on", "is", "set"],
+			["Payment Disbursement Item", "status", "=", "Pending"],
+			["Payment Disbursement Item", "snippe_reference", "is", "not set"],
+		],
+		pluck="name",
+		distinct=True,
+	)
+	run_for_each(
+		"Payment Disbursement",
+		names,
+		lambda disbursement: disbursement.resume_unsent_payouts(),
+		"Snippe payout resume failed",
+	)
 
 
 def book_missing_payout_accounting():

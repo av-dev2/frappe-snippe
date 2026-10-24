@@ -101,6 +101,7 @@ after_install = "frappe_snippe.install.after_install"
 after_migrate = [
 	"frappe_snippe.patches.custom_fields.create_custom_fields.execute",
 	"frappe_snippe.patches.property_setter.create_property_setters.execute",
+	"frappe_snippe.patches.bank.create_snippe_banks.execute",
 ]
 
 doctype_list_js = {
@@ -154,13 +155,12 @@ after_app_install = "frappe_snippe.install.after_app_install"
 # ---------------
 # Hook on document methods and events
 
-# doc_events = {
-# 	"*": {
-# 		"on_update": "method",
-# 		"on_cancel": "method",
-# 		"on_trash": "method"
-# 	}
-# }
+doc_events = {
+	"Employee": {
+		"validate": "frappe_snippe.accounting.employee_bank_account.validate_bank_code",
+		"on_update": "frappe_snippe.accounting.employee_bank_account.sync_bank_account",
+	}
+}
 
 # Scheduled Tasks
 # ---------------

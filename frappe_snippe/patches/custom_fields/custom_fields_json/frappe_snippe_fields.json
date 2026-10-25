@@ -18,5 +18,24 @@
     "depends_on": "eval:doc.salary_mode == 'Bank'",
     "mandatory_depends_on": "eval:doc.salary_mode == 'Bank' && doc.bank_ac_no",
     "description": "Bank Code of the employee's Bank"
+  },
+  {
+    "dt": "Employee",
+    "fieldname": "payout_channel",
+    "label": "Payout Channel",
+    "fieldtype": "Select",
+    "options": "\nBank Transfer\nMobile Money",
+    "insert_after": "bank_code",
+    "description": "How Snippe pays this employee's salary. When empty: Bank Transfer if a bank account is set, otherwise Mobile Money."
+  },
+  {
+    "dt": "Sales Invoice Payment",
+    "fieldname": "make_payment",
+    "label": "Make Payment",
+    "fieldtype": "Button",
+    "insert_after": "reference_no",
+    "in_list_view": 1,
+    "columns": 1,
+    "depends_on": "eval:doc.type == 'Phone' && !doc.reference_no"
   }
 ]

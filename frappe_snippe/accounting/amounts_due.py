@@ -8,6 +8,8 @@ LEDGER_DUE_FIELDS = {
 	"Employee Advance": ["advance_amount", "paid_amount"],
 	"Salary Slip": ["rounded_total", "net_pay", "journal_entry"],
 	"Loan": ["loan_amount", "disbursed_amount"],
+	"Sales Invoice": ["outstanding_amount", "is_return"],
+	"Purchase Order": ["rounded_total", "grand_total", "advance_paid"],
 }
 
 
@@ -35,6 +37,11 @@ def get_ledger_amount_due(reference_doctype, values):
 		return flt(values.advance_amount) - flt(values.paid_amount)
 	if reference_doctype == "Salary Slip":
 		return 0 if values.journal_entry else flt(values.rounded_total or values.net_pay)
+	if reference_doctype == "Sales Invoice":
+		# A Credit Note owes the customer its negative outstanding amount.
+		return -flt(values.outstanding_amount) if values.is_return else 0
+	if reference_doctype == "Purchase Order":
+		return flt(values.rounded_total or values.grand_total) - flt(values.advance_paid)
 	return flt(values.loan_amount) - flt(values.disbursed_amount)
 
 

@@ -5,6 +5,7 @@ import frappe
 from frappe.desk.desktop import get_desktop_page
 from snippe import Balance
 
+from frappe_snippe.api.client import TooManyRecordsError, list_since
 from frappe_snippe.frappe_snippe.doctype.snippe_setting import snippe_setting
 from frappe_snippe.frappe_snippe.report.payment_collection_summary import payment_collection_summary
 from frappe_snippe.frappe_snippe.report.payment_reconciliation import payment_reconciliation
@@ -147,17 +148,22 @@ class TestSnippeReconciliation(ReportTestCase):
 			return_value={"items": [snippe_item("pi_new", "completed", 100), older], "total": 500}
 		)
 
-		records = payment_reconciliation.get_snippe_records(list_page, frappe.utils.getdate(TODAY))
+		records = list_since(list_page, frappe.utils.getdate(TODAY))
 
 		self.assertEqual(set(records), {"pi_new", "pi_old"})
 		list_page.assert_called_once_with(limit=100, offset=0)
 
-	def test_too_many_records_ask_for_a_shorter_range(self):
+	def test_listing_has_a_page_limit(self):
 		page = {"items": [snippe_item("pi_same", "completed", 100)], "total": 100000}
+		with self.assertRaises(TooManyRecordsError):
+			list_since(MagicMock(return_value=page), frappe.utils.getdate(TODAY))
+
+	def test_too_many_records_ask_for_a_shorter_period(self):
+		page = {"items": [snippe_item("pi_same", "completed", 100)], "total": 100000}
+		client = make_client()
+		client.list_payment_data.return_value = page
 		with self.assertRaisesRegex(frappe.ValidationError, "Choose a shorter Period"):
-			payment_reconciliation.get_snippe_records(
-				MagicMock(return_value=page), frappe.utils.getdate(TODAY)
-			)
+			self.run_report(client)
 
 
 class TestPeriod(TzsCompanyTestCase):

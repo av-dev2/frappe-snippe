@@ -13,6 +13,7 @@ from frappe_snippe.api.client import (
 	to_snippe_amount,
 )
 from frappe_snippe.frappe_snippe.doctype.payment_disbursement.payment_disbursement import (
+	get_salary_slip_rows,
 	process_disbursement_queue,
 )
 from frappe_snippe.tasks import reconcile_pending_disbursements
@@ -367,3 +368,41 @@ class TestPayoutResume(FrappeTestCase):
 
 		disbursement.resume_unsent_payouts.assert_called_once()
 		self.assertIn(["queued_on", "is", "set"], get_all.call_args.kwargs["filters"])
+
+
+class TestPayrollDisbursementRows(FrappeTestCase):
+	def test_only_salary_slips_with_pay_left_become_rows(self):
+		slips = [
+			frappe._dict(name="SAL-1", employee_name="Asha"),
+			frappe._dict(name="SAL-2", employee_name="Juma"),
+		]
+		with (
+			patch(f"{DISBURSEMENT_MODULE}.frappe.has_permission") as has_permission,
+			patch(f"{DISBURSEMENT_MODULE}.frappe.get_all", return_value=slips),
+			patch(
+				f"{DISBURSEMENT_MODULE}.get_amounts_left_to_pay", return_value={"SAL-1": 0, "SAL-2": 450000}
+			) as left_to_pay,
+		):
+			rows = get_salary_slip_rows("HR-PRUN-0001")
+
+		has_permission.assert_called_once_with("Payroll Entry", doc="HR-PRUN-0001", throw=True)
+		left_to_pay.assert_called_once_with("Salary Slip", ["SAL-1", "SAL-2"], "")
+		self.assertEqual(
+			rows,
+			[
+				{
+					"reference_doctype": "Salary Slip",
+					"reference_name": "SAL-2",
+					"recipient_name": "Juma",
+					"amount": 450000,
+					"channel": "Bank Transfer",
+				}
+			],
+		)
+
+	def test_payroll_without_submitted_slips_has_no_rows(self):
+		with (
+			patch(f"{DISBURSEMENT_MODULE}.frappe.has_permission"),
+			patch(f"{DISBURSEMENT_MODULE}.frappe.get_all", return_value=[]),
+		):
+			self.assertEqual(get_salary_slip_rows("HR-PRUN-0001"), [])

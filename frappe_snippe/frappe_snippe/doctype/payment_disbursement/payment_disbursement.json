@@ -80,7 +80,9 @@
    "fieldtype": "Link",
    "label": "Paid From Account",
    "options": "Account",
-   "reqd": 1
+   "reqd": 1,
+   "read_only": 1,
+   "description": "The Wallet Account of the company's Snippe Setting. Payouts and their fees are credited from it."
   },
   {
    "fieldname": "narration",

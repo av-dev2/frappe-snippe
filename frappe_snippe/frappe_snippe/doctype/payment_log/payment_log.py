@@ -10,7 +10,7 @@ class PaymentLog(Document):
 		"""Apply the event; a failure stays on the log for Reprocess instead of being lost."""
 		frappe.db.savepoint("snippe_event")
 		try:
-			apply_event(self)
+			status = apply_event(self) or "Processed"
 		except Exception:
 			frappe.db.rollback(save_point="snippe_event")
 			self.db_set({"processing_status": "Failed", "processing_error": frappe.get_traceback()})
@@ -21,7 +21,7 @@ class PaymentLog(Document):
 			)
 			return
 
-		self.db_set({"processing_status": "Processed", "processing_error": None})
+		self.db_set({"processing_status": status, "processing_error": None})
 
 	@frappe.whitelist()
 	def reprocess(self):

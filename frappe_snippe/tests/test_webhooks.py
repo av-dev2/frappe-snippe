@@ -217,8 +217,8 @@ class TestWebhookEvents(TzsCompanyTestCase):
 		log = insert_log(make_event(event_id="evt_foreign", metadata={"erpnext_doc": "PAY-COL-MISSING"}))
 		self.assertEqual((log.source_doctype, log.source_name), (None, None))
 
-	def test_event_without_document_needs_no_processing(self):
-		log = insert_log(make_event(event_id="evt_orphan"))
+	def test_failed_event_without_document_needs_no_processing(self):
+		log = insert_log(make_event("payment.failed", event_id="evt_orphan"))
 		with patch.object(webhooks, "process_inbound_webhook") as inbound:
 			log.process()
 		inbound.assert_not_called()
@@ -272,7 +272,7 @@ class TestPaymentLogProcessing(TzsCompanyTestCase):
 			log.reprocess()
 
 	def test_hourly_job_processes_logs_whose_job_was_lost(self):
-		stale = insert_log(make_event(event_id="evt_stale"))
+		stale = insert_log(make_event("payment.failed", event_id="evt_stale"))
 		stale.db_set("creation", frappe.utils.add_to_date(None, minutes=-30), update_modified=False)
 		fresh = insert_log(make_event(event_id="evt_fresh"))
 		tasks.process_stale_payment_logs()

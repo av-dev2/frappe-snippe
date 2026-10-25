@@ -1,0 +1,363 @@
+{
+ "charts": [],
+ "content": "[{\"id\": \"snippe00001\", \"type\": \"number_card\", \"data\": {\"number_card_name\": \"Collected This Month\", \"col\": 4}}, {\"id\": \"snippe00002\", \"type\": \"number_card\", \"data\": {\"number_card_name\": \"Pending Collections\", \"col\": 4}}, {\"id\": \"snippe00003\", \"type\": \"number_card\", \"data\": {\"number_card_name\": \"Completed Payouts This Month\", \"col\": 4}}, {\"id\": \"snippe00004\", \"type\": \"number_card\", \"data\": {\"number_card_name\": \"Payouts To Resend\", \"col\": 4}}, {\"id\": \"snippe00005\", \"type\": \"number_card\", \"data\": {\"number_card_name\": \"Payments Needing Review\", \"col\": 4}}, {\"id\": \"snippe00006\", \"type\": \"number_card\", \"data\": {\"number_card_name\": \"Failed Payment Logs\", \"col\": 4}}, {\"id\": \"snippe00007\", \"type\": \"spacer\", \"data\": {\"col\": 12}}, {\"id\": \"snippe00008\", \"type\": \"header\", \"data\": {\"text\": \"<span class=\\\"h4\\\"><b>Shortcuts</b></span>\", \"col\": 12}}, {\"id\": \"snippe00009\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Payment Collection\", \"col\": 3}}, {\"id\": \"snippe00010\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Payment Disbursement\", \"col\": 3}}, {\"id\": \"snippe00011\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Payment Log\", \"col\": 3}}, {\"id\": \"snippe00012\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Payment Reconciliation\", \"col\": 3}}, {\"id\": \"snippe00013\", \"type\": \"spacer\", \"data\": {\"col\": 12}}, {\"id\": \"snippe00014\", \"type\": \"header\", \"data\": {\"text\": \"<span class=\\\"h4\\\"><b>Documents</b></span>\", \"col\": 12}}, {\"id\": \"snippe00015\", \"type\": \"card\", \"data\": {\"card_name\": \"Collections\", \"col\": 4}}, {\"id\": \"snippe00016\", \"type\": \"card\", \"data\": {\"card_name\": \"Payouts\", \"col\": 4}}, {\"id\": \"snippe00017\", \"type\": \"card\", \"data\": {\"card_name\": \"Accounting\", \"col\": 4}}, {\"id\": \"snippe00018\", \"type\": \"card\", \"data\": {\"card_name\": \"Setup\", \"col\": 4}}, {\"id\": \"snippe00019\", \"type\": \"spacer\", \"data\": {\"col\": 12}}, {\"id\": \"snippe00020\", \"type\": \"header\", \"data\": {\"text\": \"<span class=\\\"h4\\\"><b>Reports</b></span>\", \"col\": 12}}, {\"id\": \"snippe00021\", \"type\": \"card\", \"data\": {\"card_name\": \"Reports\", \"col\": 4}}]",
+ "creation": "2026-10-25 10:00:00.000000",
+ "custom_blocks": [],
+ "docstatus": 0,
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "wallet",
+ "idx": 0,
+ "indicator_color": "",
+ "is_hidden": 0,
+ "label": "Snippe",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Collections",
+   "link_count": 6,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Payment Collection",
+   "link_count": 0,
+   "link_to": "Payment Collection",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Customer",
+   "link_count": 0,
+   "link_to": "Customer",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Sales Order",
+   "link_count": 0,
+   "link_to": "Sales Order",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Sales Invoice",
+   "link_count": 0,
+   "link_to": "Sales Invoice",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "POS Invoice",
+   "link_count": 0,
+   "link_to": "POS Invoice",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Loan",
+   "link_count": 0,
+   "link_to": "Loan",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Payouts",
+   "link_count": 8,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Payment Disbursement",
+   "link_count": 0,
+   "link_to": "Payment Disbursement",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Purchase Order",
+   "link_count": 0,
+   "link_to": "Purchase Order",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Purchase Invoice",
+   "link_count": 0,
+   "link_to": "Purchase Invoice",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Payroll Entry",
+   "link_count": 0,
+   "link_to": "Payroll Entry",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Salary Slip",
+   "link_count": 0,
+   "link_to": "Salary Slip",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Employee Advance",
+   "link_count": 0,
+   "link_to": "Employee Advance",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Expense Claim",
+   "link_count": 0,
+   "link_to": "Expense Claim",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Loan",
+   "link_count": 0,
+   "link_to": "Loan",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Accounting",
+   "link_count": 3,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Payment Entry",
+   "link_count": 0,
+   "link_to": "Payment Entry",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Journal Entry",
+   "link_count": 0,
+   "link_to": "Journal Entry",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Payment Log",
+   "link_count": 0,
+   "link_to": "Payment Log",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Setup",
+   "link_count": 2,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Snippe Setting",
+   "link_count": 0,
+   "link_to": "Snippe Setting",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Mode of Payment",
+   "link_count": 0,
+   "link_to": "Mode of Payment",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Reports",
+   "link_count": 3,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Payment Reconciliation",
+   "link_count": 0,
+   "link_to": "Payment Reconciliation",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Payment Collection Summary",
+   "link_count": 0,
+   "link_to": "Payment Collection Summary",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Payment Payout Summary",
+   "link_count": 0,
+   "link_to": "Payment Payout Summary",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  }
+ ],
+ "modified": "2026-10-25 13:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Frappe Snippe",
+ "name": "Snippe",
+ "number_cards": [
+  {
+   "label": "Collected This Month",
+   "number_card_name": "Collected This Month"
+  },
+  {
+   "label": "Pending Collections",
+   "number_card_name": "Pending Collections"
+  },
+  {
+   "label": "Completed Payouts This Month",
+   "number_card_name": "Completed Payouts This Month"
+  },
+  {
+   "label": "Payouts To Resend",
+   "number_card_name": "Payouts To Resend"
+  },
+  {
+   "label": "Payments Needing Review",
+   "number_card_name": "Payments Needing Review"
+  },
+  {
+   "label": "Failed Payment Logs",
+   "number_card_name": "Failed Payment Logs"
+  }
+ ],
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "restrict_to_domain": "",
+ "roles": [
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "Accounts Manager"
+  },
+  {
+   "role": "Accounts User"
+  },
+  {
+   "role": "HR Manager"
+  }
+ ],
+ "sequence_id": 30.0,
+ "shortcuts": [
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Payment Collection",
+   "link_to": "Payment Collection",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Payment Disbursement",
+   "link_to": "Payment Disbursement",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Payment Log",
+   "link_to": "Payment Log",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "",
+   "label": "Payment Reconciliation",
+   "link_to": "Payment Reconciliation",
+   "type": "Report"
+  }
+ ],
+ "title": "Snippe"
+}

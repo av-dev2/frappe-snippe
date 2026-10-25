@@ -1,10 +1,13 @@
 import dataclasses
+from collections import defaultdict
 
 import frappe
+from erpnext.accounts.utils import get_balance_on
 from frappe import _
 from frappe.model.document import Document
-from frappe.utils import cint
+from frappe.utils import cint, flt
 
+from frappe_snippe.accounting.wallet_entries import post_wallet_entry
 from frappe_snippe.api.client import (
 	get_snippe_client,
 	snippe_errors_as_messages,
@@ -87,10 +90,71 @@ class SnippeSetting(Document):
 		return account
 
 	@frappe.whitelist()
-	def get_balance(self):
-		"""Live Snippe balance for the form; it is never stored."""
+	def get_balance(self) -> dict:
+		"""Live Snippe balance beside the Wallet Account balance, for the form; nothing is stored.
+
+		Pending payouts are already taken from Snippe's available balance but are booked only once
+		Snippe completes them, so they show as a difference until then.
+		"""
 		with get_snippe_client(self.company) as client, snippe_errors_as_messages():
-			return dataclasses.asdict(client.get_balance())
+			balance = dataclasses.asdict(client.get_balance())
+
+		balance["wallet_balance"] = flt(
+			get_balance_on(self.get_account("wallet_account"), company=self.company)
+		)
+		balance["difference"] = flt(balance["available_balance"]) - balance["wallet_balance"]
+		return balance
+
+	@frappe.whitelist()
+	def record_wallet_transfer(
+		self,
+		transfer_type: str,
+		bank_account: str,
+		amount: float,
+		posting_date: str,
+		reference: str,
+		fee: float = 0,
+	) -> str:
+		"""Book money moved between a bank account and the Snippe balance, so the Wallet Account follows."""
+		self.check_permission("write")
+		if transfer_type not in ("Top-up", "Withdrawal"):
+			frappe.throw(_("Transfer Type must be Top-up or Withdrawal."))
+		if flt(amount) <= 0 or flt(fee) < 0:
+			frappe.throw(_("Amount must be more than 0 and the fee cannot be negative."))
+		if not reference or frappe.db.exists(
+			"Journal Entry",
+			{"company": self.company, "voucher_type": "Contra Entry", "cheque_no": reference, "docstatus": 1},
+		):
+			frappe.throw(_("Enter the bank reference of this transfer. Each reference is recorded once."))
+
+		wallet_account = self.get_account("wallet_account")
+		if bank_account == wallet_account:
+			frappe.throw(_("Choose the bank account the money moved to or from, not the Wallet Account."))
+		self.validate_bank_account(bank_account)
+
+		sign = 1 if transfer_type == "Top-up" else -1
+		amounts = defaultdict(float)
+		amounts[wallet_account] += sign * flt(amount) - flt(fee)
+		amounts[bank_account] -= sign * flt(amount)
+		amounts[self.get_account("fees_account")] += flt(fee)
+
+		journal_entry = post_wallet_entry(
+			company=self.company,
+			posting_date=posting_date,
+			reference=reference,
+			remark=_("Snippe {0} between {1} and the Wallet Account").format(_(transfer_type), bank_account),
+			amounts=amounts,
+			voucher_type="Contra Entry",
+			# The user books it, so their own Journal Entry permissions apply.
+			ignore_permissions=False,
+		)
+		return journal_entry.name
+
+	def validate_bank_account(self, account: str):
+		ledger = frappe.get_cached_doc("Account", account)
+		if ledger.company != self.company or ledger.is_group or ledger.account_type not in ("Bank", "Cash"):
+			frappe.throw(_("{0} must be a Bank or Cash ledger of Company {1}.").format(account, self.company))
+		validate_snippe_account_currency(account)
 
 	def get_card_return_urls(self):
 		if not self.card_redirect_url:

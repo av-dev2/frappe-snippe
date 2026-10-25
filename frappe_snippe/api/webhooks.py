@@ -9,6 +9,7 @@ from frappe import _
 from frappe.utils import flt, get_url, nowdate
 from snippe import WebhookHandler, WebhookVerificationError
 
+from frappe_snippe.accounting.wallet_entries import post_wallet_entry
 from frappe_snippe.api.client import PAYMENT_STATUS, PAYOUT_STATUS, get_snippe_setting
 
 PAYMENT_EVENTS = {
@@ -342,39 +343,14 @@ def get_pos_wallet_amounts(collection, paid_amount, fee_amount) -> dict:
 
 
 def make_wallet_journal_entry(collection, amounts: dict):
-	"""Bank Entry for a collection from {account: debit (+) or credit (-)}; None when nothing is left.
-
-	Amounts on the same account cancel out, so a mode that posts to the Wallet Account books only the fee.
-	"""
-	amounts = {account: amount for account, amount in amounts.items() if amount}
-	if not amounts:
-		return None
-
-	journal_entry = frappe.new_doc("Journal Entry")
-	journal_entry.update(
-		{
-			"voucher_type": "Bank Entry",
-			"company": collection.company,
-			"posting_date": collection.posting_date,
-			"cheque_no": collection.snippe_reference,
-			"cheque_date": collection.posting_date,
-			"user_remark": _("Snippe payment {0}").format(collection.name),
-		}
+	"""Bank Entry for a collection's wallet movements; same-account amounts cancel out."""
+	return post_wallet_entry(
+		company=collection.company,
+		posting_date=collection.posting_date,
+		reference=collection.snippe_reference,
+		remark=_("Snippe payment {0}").format(collection.name),
+		amounts=amounts,
 	)
-	cost_center = get_default_cost_center(collection.company)
-	for account, amount in amounts.items():
-		journal_entry.append(
-			"accounts",
-			{
-				"account": account,
-				"cost_center": cost_center,
-				"debit_in_account_currency": max(amount, 0),
-				"credit_in_account_currency": max(-amount, 0),
-			},
-		)
-	journal_entry.insert(ignore_permissions=True)
-	journal_entry.submit()
-	return journal_entry
 
 
 def notify_owner(doc, subject: str):

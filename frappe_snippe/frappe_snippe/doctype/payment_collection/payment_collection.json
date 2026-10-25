@@ -11,6 +11,7 @@
   "column_break_1",
   "posting_date",
   "payment_method",
+  "mode_of_payment",
   "phone_number",
   "total_amount",
   "allow_custom_amount",
@@ -22,6 +23,7 @@
   "snippe_reference",
   "status",
   "failure_reason",
+  "wallet_journal_entry",
   "column_break_2",
   "payment_url",
   "payment_qr_code",
@@ -29,6 +31,7 @@
   "payment_link_url",
   "hidden_section",
   "idempotency_key",
+  "payment_row",
   "snippe_event_id",
   "raw_response"
  ],
@@ -87,6 +90,14 @@
    "reqd": 1,
    "in_standard_filter": 1,
    "in_list_view": 1
+  },
+  {
+   "fieldname": "mode_of_payment",
+   "fieldtype": "Link",
+   "label": "Mode of Payment",
+   "options": "Mode of Payment",
+   "reqd": 1,
+   "description": "A Mode of Payment of type Phone. Its own account may differ from the Wallet Account."
   },
   {
    "fieldname": "phone_number",
@@ -168,6 +179,14 @@
    "depends_on": "eval:doc.status=='Failed'"
   },
   {
+   "fieldname": "wallet_journal_entry",
+   "fieldtype": "Link",
+   "label": "Wallet Journal Entry",
+   "options": "Journal Entry",
+   "read_only": 1,
+   "description": "For a POS invoice payment: moves the money from the Mode of Payment account into the Wallet Account and books Snippe's fee."
+  },
+  {
    "fieldname": "column_break_2",
    "fieldtype": "Column Break"
   },
@@ -210,6 +229,13 @@
    "label": "Idempotency Key",
    "read_only": 1,
    "hidden": 1
+  },
+  {
+   "fieldname": "payment_row",
+   "fieldtype": "Data",
+   "label": "Invoice Payment Row",
+   "read_only": 1,
+   "description": "The POS invoice payments row this collection pays."
   },
   {
    "fieldname": "snippe_event_id",

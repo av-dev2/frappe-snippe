@@ -234,3 +234,11 @@ class TestWorkspaceVisibility(TzsCompanyTestCase):
 			cards["Reports"],
 			["Payment Reconciliation", "Payment Collection Summary", "Payment Payout Summary"],
 		)
+
+	def test_administrator_sees_every_card(self):
+		# Frappe hides every card from Administrator when one linked DocType is missing.
+		page = get_desktop_page(json.dumps({"name": "Snippe", "title": "Snippe", "public": 1}))
+		self.assertEqual(
+			[card["label"] for card in page["cards"]["items"]],
+			["Collections", "Payouts", "Accounting", "Setup", "Reports"],
+		)

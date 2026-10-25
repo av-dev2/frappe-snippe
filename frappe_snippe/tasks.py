@@ -1,13 +1,21 @@
 from collections import defaultdict
+from functools import partial
 
 import frappe
 from frappe import _
 from frappe.desk.doctype.notification_log.notification_log import enqueue_create_notification
-from frappe.utils import add_to_date, flt, fmt_money, now_datetime
+from frappe.utils import add_days, add_to_date, flt, fmt_money, getdate, now_datetime, nowdate
 from frappe.utils.user import get_users_with_role
 from snippe import RateLimitError, SnippeError
 
-from frappe_snippe.api.client import BACKGROUND_RATE_LIMIT_WAITS, PAYOUT_STATUS, get_snippe_client
+from frappe_snippe.api.client import (
+	BACKGROUND_RATE_LIMIT_WAITS,
+	PAYMENT_STATUS,
+	PAYOUT_STATUS,
+	TooManyRecordsError,
+	get_snippe_client,
+	list_since,
+)
 from frappe_snippe.api.webhooks import process_inbound_webhook
 
 RETRY_FILTERS = (
@@ -16,6 +24,7 @@ RETRY_FILTERS = (
 )
 # A webhook job normally runs within seconds; older queued logs lost their job.
 STALE_LOG_MINUTES = 10
+LIST_LOOKBACK_DAYS = 7
 
 
 def hourly():
@@ -110,18 +119,54 @@ def process_stale_payment_logs():
 
 
 def reconcile_pending_collections():
-	"""Apply Snippe's status to collections whose webhook never arrived."""
-	names = frappe.get_all(
+	"""Apply Snippe's status to collections whose webhook never arrived.
+
+	List Payments is read first, as it carries the settlement fees that Get Payment Status lacks.
+	"""
+	collections = frappe.get_all(
 		"Payment Collection",
 		filters={"docstatus": 1, "status": "Pending", "snippe_reference": ("is", "set")},
-		pluck="name",
+		fields=["name", "company", "posting_date"],
 	)
-	run_for_each("Payment Collection", names, reconcile_collection, "Snippe collection status check failed")
+	by_company = defaultdict(list)
+	for collection in collections:
+		by_company[collection.company].append(collection)
+
+	for company, company_collections in by_company.items():
+		# Older stuck collections use the status check, so they cannot push the list past its page limit.
+		oldest = max(
+			min(collection.posting_date for collection in company_collections),
+			getdate(add_days(nowdate(), -LIST_LOOKBACK_DAYS)),
+		)
+		payments = get_listed_payments(company, add_days(oldest, -1))
+		run_for_each(
+			"Payment Collection",
+			[collection.name for collection in company_collections],
+			partial(reconcile_collection, payments=payments),
+			"Snippe collection status check failed",
+		)
 
 
-def reconcile_collection(collection):
-	with get_snippe_client(collection.company, BACKGROUND_RATE_LIMIT_WAITS) as client:
-		status, payload = collection.get_snippe_update(client)
+def get_listed_payments(company: str, from_date) -> dict:
+	"""The company's Snippe payments since from_date; empty when the list cannot be read in full."""
+	try:
+		with get_snippe_client(company, BACKGROUND_RATE_LIMIT_WAITS) as client:
+			return list_since(client.list_payment_data, from_date)
+	except (SnippeError, TooManyRecordsError):
+		frappe.log_error(
+			title="Snippe payment list not read", reference_doctype="Company", reference_name=company
+		)
+		return {}
+
+
+def reconcile_collection(collection, payments: dict):
+	"""Book from the listed payment when there is one, else from Snippe's status check, which has no fee."""
+	payment = payments.get(collection.snippe_reference)
+	if payment:
+		status, payload = PAYMENT_STATUS.get(payment["status"], "Pending"), payment
+	else:
+		with get_snippe_client(collection.company, BACKGROUND_RATE_LIMIT_WAITS) as client:
+			status, payload = collection.get_snippe_update(client)
 
 	if status != "Pending":
 		process_inbound_webhook(collection.name, status, None, payload)

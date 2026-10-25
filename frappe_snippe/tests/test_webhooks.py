@@ -312,12 +312,13 @@ class TestWebhookDocumentUpdates(FrappeTestCase):
 				"get_snippe_setting",
 				return_value=frappe._dict(auto_create_sales_invoice=auto_invoice),
 			),
-			patch.object(webhooks, "create_payment_entry") as create_payment_entry,
+			patch.object(webhooks, "book_collection") as book_collection,
 			patch.object(webhooks, "auto_create_sales_invoice") as auto_create_sales_invoice,
+			patch.object(webhooks, "notify_owner") as self.notify_owner,
 			patch.object(webhooks.frappe, "log_error") as self.log_error,
 		):
 			webhooks.process_inbound_webhook("PAY-COL-TEST", status, event_id, payload)
-		return create_payment_entry, auto_create_sales_invoice
+		return book_collection, auto_create_sales_invoice
 
 	def test_completed_payment_posts_payment_entry(self, db_set):
 		create_payment_entry, auto_create_sales_invoice = self.run_inbound(
@@ -326,6 +327,8 @@ class TestWebhookDocumentUpdates(FrappeTestCase):
 		self.assertEqual(create_payment_entry.call_args.args[1:], (50000, 0))
 		auto_create_sales_invoice.assert_called_once()
 		self.assertIn(({"status": "Completed", "snippe_event_id": "evt_9"},), set_args(db_set))
+		self.assertEqual(db_set.call_args_list[0].kwargs, {"notify": True})
+		self.assertIn("50000 TZS received", self.notify_owner.call_args.args[1])
 
 	def test_settlement_fee_reaches_the_payment_entry(self, db_set):
 		create_payment_entry, _auto = self.run_inbound(
@@ -365,6 +368,21 @@ class TestWebhookDocumentUpdates(FrappeTestCase):
 			set_args(db_set),
 		)
 		self.assertIn(("status", "Failed"), set_args(db_set))
+		self.assertIn("payment failed", self.notify_owner.call_args.args[1])
+
+	def test_owner_gets_a_desk_notification(self, db_set):
+		todo = frappe.get_doc({"doctype": "ToDo", "description": "snippe owner"}).insert()
+		webhooks.notify_owner(todo, "PAY-COL-1: 50000 TZS received")
+		self.assertTrue(
+			frappe.db.exists(
+				"Notification Log",
+				{
+					"for_user": todo.owner,
+					"document_name": todo.name,
+					"subject": "PAY-COL-1: 50000 TZS received",
+				},
+			)
+		)
 
 	def test_payout_event_updates_matching_row(self, db_set):
 		disbursement = frappe.get_doc(

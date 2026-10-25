@@ -10,6 +10,7 @@ TZS_ABBR = "STZ"
 TZS_CASH = f"Cash - {TZS_ABBR}"
 TZS_FEES = f"Administrative Expenses - {TZS_ABBR}"
 USD_COMPANY = "Wind Power LLC"
+USD_CASH = "Cash - WP"
 USD_FEES = "Administrative Expenses - WP"
 
 
@@ -33,11 +34,11 @@ def get_tzs_company():
 	return TZS_COMPANY
 
 
-def make_snippe_setting(company=TZS_COMPANY, **values):
+def make_snippe_setting(company=TZS_COMPANY, ignore_validate=False, **values):
 	"""Replace the company's Snippe Setting with a fully enabled one, changed by values."""
 	frappe.delete_doc_if_exists("Snippe Setting", company)
-	accounts = {"collection_account": TZS_CASH, "fees_account": TZS_FEES} if company == TZS_COMPANY else {}
-	return frappe.get_doc(
+	accounts = {"wallet_account": TZS_CASH, "fees_account": TZS_FEES} if company == TZS_COMPANY else {}
+	setting = frappe.get_doc(
 		{
 			"doctype": "Snippe Setting",
 			"company": company,
@@ -48,12 +49,24 @@ def make_snippe_setting(company=TZS_COMPANY, **values):
 			**accounts,
 			**values,
 		}
-	).insert()
+	)
+	setting.flags.ignore_validate = ignore_validate
+	return setting.insert()
 
 
 def make_payout_setting(**values):
-	"""Payouts-only Snippe Setting for ERPNext's USD test company, whose ledgers payout tests post to."""
-	return make_snippe_setting(USD_COMPANY, enable_collection=0, fees_account=USD_FEES, **values)
+	"""Payouts-only Snippe Setting for ERPNext's USD test company, whose ledgers payout tests post to.
+
+	That company has no TZS account, so the setting skips the TZS check.
+	"""
+	return make_snippe_setting(
+		USD_COMPANY,
+		ignore_validate=True,
+		enable_collection=0,
+		wallet_account=USD_CASH,
+		fees_account=USD_FEES,
+		**values,
+	)
 
 
 class TzsCompanyTestCase(FrappeTestCase):
@@ -72,18 +85,18 @@ class TestSnippeSettingValidation(TzsCompanyTestCase):
 		self.assertEqual(make_snippe_setting().name, TZS_COMPANY)
 
 	def test_account_of_another_company_is_rejected(self):
-		self.assert_rejected("ledger account of Company", collection_account="Cash - WP")
+		self.assert_rejected("ledger account of Company", wallet_account="Cash - WP")
 
 	def test_non_tzs_gl_account_is_rejected(self):
 		with self.assertRaisesRegex(frappe.ValidationError, "is in USD"):
 			make_snippe_setting(
 				USD_COMPANY,
-				collection_account="Cash - WP",
+				wallet_account="Cash - WP",
 				fees_account="Administrative Expenses - WP",
 			)
 
-	def test_gl_account_must_be_bank_or_cash(self):
-		self.assert_rejected("Bank or Cash", collection_account=TZS_FEES)
+	def test_wallet_account_must_be_bank_or_cash(self):
+		self.assert_rejected("Wallet Account must be a Bank or Cash", wallet_account=TZS_FEES)
 
 	def test_fees_account_must_be_a_ledger_expense_account(self):
 		self.assert_rejected("Expense account", fees_account=TZS_CASH)
@@ -91,8 +104,8 @@ class TestSnippeSettingValidation(TzsCompanyTestCase):
 
 	def test_enabled_feature_needs_its_credentials_and_accounts(self):
 		self.assert_rejected("API Key", api_key=None)
-		self.assert_rejected("Collection Account", collection_account=None)
-		make_snippe_setting(enable_collection=0, collection_account=None)
+		for feature in ("enable_collection", "enable_payouts"):
+			self.assert_rejected("Wallet Account", wallet_account=None, **{feature: 0})
 
 	def test_disabled_setting_needs_nothing(self):
 		make_snippe_setting(
@@ -120,10 +133,18 @@ class TestSnippeSettingUse(TzsCompanyTestCase):
 			setting.validate_payouts_enabled()
 
 	def test_collection_for_a_company_without_collection_is_blocked(self):
-		make_snippe_setting(enable_collection=0, collection_account=None)
+		make_snippe_setting(enable_collection=0)
 		collection = frappe.get_doc({"doctype": "Payment Collection", "company": TZS_COMPANY})
 		with self.assertRaisesRegex(frappe.ValidationError, "Payment collection through Snippe is disabled"):
 			collection.validate()
+
+	def test_payouts_are_credited_from_the_wallet_account(self):
+		make_snippe_setting()
+		disbursement = frappe.get_doc(
+			{"doctype": "Payment Disbursement", "company": TZS_COMPANY, "paid_from_account": TZS_FEES}
+		)
+		disbursement.validate()
+		self.assertEqual(disbursement.paid_from_account, TZS_CASH)
 
 	def test_disbursement_for_a_company_without_payouts_is_blocked(self):
 		make_snippe_setting(enable_payouts=0)
@@ -141,6 +162,7 @@ class TestSnippeSettingUse(TzsCompanyTestCase):
 		self.assertNotIn(USD_COMPANY, bootinfo.snippe_features)
 
 	def test_missing_account_names_the_field(self):
-		setting = make_snippe_setting(enable_collection=0, collection_account=None)
-		with self.assertRaisesRegex(frappe.ValidationError, "Set the Collection Account"):
-			setting.get_account("collection_account")
+		setting = make_snippe_setting()
+		setting.db_set("wallet_account", None)
+		with self.assertRaisesRegex(frappe.ValidationError, "Set the Wallet Account"):
+			setting.get_account("wallet_account")

@@ -48,6 +48,11 @@ class PaymentCollection(Document):
 		self.validate_draft_invoice()
 		self.validate_loan()
 
+	def before_validate(self):
+		# A Payment Request brings its own mode of payment to the Payment Entry ERPNext makes for it.
+		if not self.mode_of_payment and not self.payment_request:
+			frappe.throw(_("Mode of Payment is required."), frappe.MandatoryError)
+
 	def validate_mode_of_payment(self):
 		if (
 			self.mode_of_payment

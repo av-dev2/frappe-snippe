@@ -6,10 +6,12 @@ from frappe_snippe.accounting.disbursement_entries import book_completed_payout
 from frappe_snippe.api import webhooks
 from frappe_snippe.tests.test_collection_customer import make_collection, make_customer
 from frappe_snippe.tests.test_snippe_setting import (
+	PHONE_MODE,
 	TZS_CASH,
 	TZS_COMPANY,
 	TZS_FEES,
 	TzsCompanyTestCase,
+	make_phone_mode_of_payment,
 	make_snippe_setting,
 )
 
@@ -100,6 +102,12 @@ def make_purchase_invoice(rate):
 
 
 def submit_invoice(values):
+	invoice = insert_invoice(values)
+	invoice.submit()
+	return invoice
+
+
+def insert_invoice(values):
 	if not frappe.db.exists("Item", SERVICE_ITEM):
 		frappe.get_doc(
 			{
@@ -111,10 +119,7 @@ def submit_invoice(values):
 			}
 		).insert()
 
-	invoice = frappe.get_doc(values)
-	invoice.insert()
-	invoice.submit()
-	return invoice
+	return frappe.get_doc(values).insert()
 
 
 def make_paid_collection(customer, *rates):
@@ -126,6 +131,7 @@ def make_paid_collection(customer, *rates):
 			"customer": customer,
 			"posting_date": frappe.utils.nowdate(),
 			"payment_method": "Mobile Money",
+			"mode_of_payment": PHONE_MODE,
 			"phone_number": "0712345678",
 			"snippe_reference": "pi_ref",
 			"references": [
@@ -146,6 +152,7 @@ class TestPaymentEntryBooking(TzsCompanyTestCase):
 	def setUp(self):
 		self.customer = make_customer().name
 		self.setting = make_snippe_setting()
+		make_phone_mode_of_payment()
 
 	def make_paid_collection(self, *rates):
 		return make_paid_collection(self.customer, *rates)
@@ -225,6 +232,7 @@ class TestWalletAccountBalance(TzsCompanyTestCase):
 
 	def test_wallet_balance_is_collections_less_payouts_and_fees(self):
 		make_snippe_setting(auto_submit_accounting_entries=1)
+		make_phone_mode_of_payment()
 		webhooks.create_payment_entry(make_paid_collection(make_customer().name, 50000), 50000, 1000)
 
 		purchase_invoice = make_purchase_invoice(30000)
@@ -232,6 +240,7 @@ class TestWalletAccountBalance(TzsCompanyTestCase):
 			{
 				"doctype": "Payment Disbursement",
 				"company": TZS_COMPANY,
+				"posting_date": frappe.utils.nowdate(),
 				"items": [
 					{
 						"reference_doctype": "Purchase Invoice",

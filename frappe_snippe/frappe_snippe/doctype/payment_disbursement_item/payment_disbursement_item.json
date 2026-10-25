@@ -29,7 +29,7 @@
    "fieldname": "reference_doctype",
    "fieldtype": "Select",
    "label": "Reference DocType",
-   "options": "Salary Slip\nPurchase Invoice\nLoan\nEmployee Advance\nExpense Claim",
+   "options": "Salary Slip\nPurchase Invoice\nLoan\nEmployee Advance\nExpense Claim\nSales Invoice\nPurchase Order",
    "in_list_view": 1,
    "reqd": 1
   },
@@ -39,7 +39,8 @@
    "label": "Reference Name",
    "options": "reference_doctype",
    "in_list_view": 1,
-   "reqd": 1
+   "reqd": 1,
+   "search_index": 1
   },
   {
    "fieldname": "recipient_name",

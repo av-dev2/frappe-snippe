@@ -5,6 +5,7 @@ import frappe
 from frappe.tests.utils import FrappeTestCase
 from snippe.types import BankCode
 
+from frappe_snippe.frappe_snippe.doctype.payment_disbursement import payees
 from frappe_snippe.patches.bank import create_snippe_banks
 from frappe_snippe.tests.test_employee_bank_account import make_employee
 
@@ -91,17 +92,11 @@ class TestPartyBankDetails(FrappeTestCase):
 			}
 		).insert()
 
-	def fill(self, row, party):
+	def fill(self, row, party, party_type="Supplier"):
 		"""Fill the row as if its reference document names this party."""
-		get_value = frappe.db.get_value
-
-		def get_reference_party(doctype, *args, **kwargs):
-			if doctype == row.reference_doctype:
-				return party
-			return get_value(doctype, *args, **kwargs)
-
-		with patch.object(frappe.db, "get_value", side_effect=get_reference_party):
-			row.set_party_bank_details()
+		parties = {(row.reference_doctype, row.reference_name): (party_type, party)}
+		with patch.object(payees, "get_parties", return_value=parties):
+			payees.fill_payee_details([row])
 		return row
 
 	def test_fills_bank_code_and_account_from_supplier(self):
@@ -135,12 +130,14 @@ class TestPartyBankDetails(FrappeTestCase):
 		)
 		for reference_doctype in ("Salary Slip", "Expense Claim", "Employee Advance"):
 			with self.subTest(reference_doctype=reference_doctype):
-				row = self.fill(make_bank_row(reference_doctype=reference_doctype), self.employee.name)
+				row = self.fill(
+					make_bank_row(reference_doctype=reference_doctype), self.employee.name, "Employee"
+				)
 				self.assertEqual((row.bank_code, row.bank_account), ("NMB", "2041000111"))
 
 	def test_fills_loan_from_the_applicant(self):
 		self.make_bank_account(party_type="Employee", party=self.employee.name)
-		row = self.fill(make_bank_row(reference_doctype="Loan"), ("Employee", self.employee.name))
+		row = self.fill(make_bank_row(reference_doctype="Loan"), self.employee.name, "Employee")
 		self.assertEqual((row.bank_code, row.bank_account), ("CRDB", "0150123456700"))
 
 
@@ -166,3 +163,43 @@ class TestBankDetailsValidation(FrappeTestCase):
 		)
 		with self.assertRaisesRegex(frappe.ValidationError, "Bank Code and Bank Account"):
 			disbursement.validate()
+
+
+class TestPayeeLookups(FrappeTestCase):
+	def test_query_count_does_not_grow_with_rows(self):
+		def run(count):
+			rows = [
+				make_bank_row(reference_doctype="Purchase Invoice", reference_name=f"PINV-{i}")
+				for i in range(count)
+			]
+			rows += [
+				make_bank_row(
+					channel="Mobile Money", reference_doctype="Expense Claim", reference_name=f"EC-{i}"
+				)
+				for i in range(count)
+			]
+			with patch.object(payees.frappe, "get_all", return_value=[]) as get_all:
+				payees.fill_payee_details(rows)
+			return get_all.call_count
+
+		self.assertEqual(run(3), run(300))
+
+	def test_parties_come_from_each_reference_doctype(self):
+		replies = {
+			"Purchase Invoice": [frappe._dict(name="PINV-1", supplier="SUP-1")],
+			"Loan": [frappe._dict(name="LOAN-1", applicant="EMP-1", applicant_type="Employee")],
+		}
+		rows = [
+			make_bank_row(reference_doctype="Purchase Invoice", reference_name="PINV-1"),
+			make_bank_row(reference_doctype="Loan", reference_name="LOAN-1"),
+		]
+		with patch.object(payees.frappe, "get_all", side_effect=lambda doctype, **kwargs: replies[doctype]):
+			parties = payees.get_parties(rows)
+
+		self.assertEqual(
+			parties,
+			{
+				("Purchase Invoice", "PINV-1"): ("Supplier", "SUP-1"),
+				("Loan", "LOAN-1"): ("Employee", "EMP-1"),
+			},
+		)

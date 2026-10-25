@@ -16,7 +16,7 @@
    "fieldname": "reference_doctype",
    "fieldtype": "Select",
    "label": "Reference DocType",
-   "options": "Sales Invoice\nPOS Invoice\nSales Order",
+   "options": "Sales Invoice\nPOS Invoice\nSales Order\nLoan",
    "in_list_view": 1,
    "reqd": 1
   },
@@ -48,14 +48,16 @@
    "options": "Pending\nPaid\nFailed",
    "default": "Pending",
    "read_only": 1,
-   "in_list_view": 1
+   "in_list_view": 1,
+   "no_copy": 1
   },
   {
    "fieldname": "payment_entry",
    "fieldtype": "Link",
    "label": "Payment Entry",
    "options": "Payment Entry",
-   "read_only": 1
+   "read_only": 1,
+   "no_copy": 1
   }
  ],
  "istable": 1,

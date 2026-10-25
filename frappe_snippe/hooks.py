@@ -44,9 +44,12 @@ required_apps = ["erpnext"]
 
 # include js in doctype views
 doctype_js = {
-	"Sales Invoice": "public/js/snippe_collection.js",
+	"Sales Invoice": ["public/js/snippe_collection.js", "public/js/snippe_disbursement.js"],
 	"POS Invoice": "public/js/snippe_collection.js",
 	"Sales Order": "public/js/snippe_collection.js",
+	"Loan": "public/js/snippe_collection.js",
+	"Customer": "public/js/snippe_collection.js",
+	"Purchase Order": "public/js/snippe_disbursement.js",
 	"Purchase Invoice": "public/js/snippe_disbursement.js",
 	"Salary Slip": "public/js/snippe_disbursement.js",
 	"Employee Advance": "public/js/snippe_disbursement.js",

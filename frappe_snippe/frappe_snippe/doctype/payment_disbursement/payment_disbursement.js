@@ -1,5 +1,15 @@
 frappe.ui.form.on("Payment Disbursement", {
 	refresh(frm) {
+		const has_failed_rows = frm.doc.items.some((row) =>
+			["Failed", "Reversed"].includes(row.status)
+		);
+		if (frm.doc.docstatus === 1 && has_failed_rows) {
+			frm.add_custom_button(__("Resend Failed Rows"), async () => {
+				const { message: name } = await frm.call("make_retry_disbursement");
+				frappe.set_route("Form", "Payment Disbursement", name);
+			});
+		}
+
 		if (frm.doc.docstatus !== 0 || frm.is_new()) return;
 
 		frm.add_custom_button(__("Check Fees & Balance"), async () => {

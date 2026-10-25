@@ -1,7 +1,10 @@
 from collections import defaultdict
 
 import frappe
-from frappe.utils import add_to_date, now_datetime
+from frappe import _
+from frappe.desk.doctype.notification_log.notification_log import enqueue_create_notification
+from frappe.utils import add_to_date, flt, fmt_money, now_datetime
+from frappe.utils.user import get_users_with_role
 from snippe import RateLimitError, SnippeError
 
 from frappe_snippe.api.client import BACKGROUND_RATE_LIMIT_WAITS, PAYOUT_STATUS, get_snippe_client
@@ -21,6 +24,55 @@ def hourly():
 	reconcile_pending_disbursements()
 	resume_unsent_payouts()
 	book_missing_payout_accounting()
+
+
+def daily():
+	alert_low_balances()
+
+
+def alert_low_balances():
+	"""Tell Accounts Managers when a company's Snippe balance is below its alert level, before payouts fail."""
+	settings = frappe.get_all(
+		"Snippe Setting",
+		filters={"enable_payouts": 1, "low_balance_alert": (">", 0)},
+		fields=["name", "company", "low_balance_alert"],
+	)
+	recipients = get_users_with_role("Accounts Manager")
+	for setting in settings:
+		try:
+			with get_snippe_client(setting.company, BACKGROUND_RATE_LIMIT_WAITS) as client:
+				balance = client.get_balance()
+		except Exception:
+			frappe.log_error(
+				title="Snippe balance check failed",
+				reference_doctype="Snippe Setting",
+				reference_name=setting.name,
+			)
+			continue
+
+		if flt(balance.available_balance) >= flt(setting.low_balance_alert):
+			continue
+		subject = _(
+			"Snippe balance for {0} is low: {1} available, alert level {2}. Top up before payouts."
+		).format(
+			setting.company,
+			fmt_money(balance.available_balance, currency=balance.currency),
+			fmt_money(setting.low_balance_alert, currency=balance.currency),
+		)
+		enqueue_create_notification(
+			# A manager restricted to other companies must not see this company's balance.
+			[
+				user
+				for user in recipients
+				if frappe.has_permission("Snippe Setting", doc=setting.name, user=user)
+			],
+			{
+				"type": "Alert",
+				"subject": subject,
+				"document_type": "Snippe Setting",
+				"document_name": setting.name,
+			},
+		)
 
 
 def run_for_each(doctype, names, method, error_title):

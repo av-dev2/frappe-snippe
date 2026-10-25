@@ -15,10 +15,10 @@
   "section_break_chxw",
   "wallet_account",
   "column_break_zdvc",
+  "fees_account",
   "column_break_yjvz",
   "auto_create_sales_invoice",
   "auto_submit_accounting_entries",
-  "fees_account",
   "collection_section",
   "session_redirect_url",
   "session_expiry_minutes",
@@ -70,15 +70,16 @@
    "mandatory_depends_on": "eval:doc.enable_collection || doc.enable_payouts"
   },
   {
+   "depends_on": "eval:doc.enable_collection || doc.enable_payouts",
+   "description": "TZS Bank or Cash account that mirrors your Snippe balance. Collections add to it and payouts, with their fees, take from it, so its balance matches the Snippe Dashboard.",
    "fieldname": "wallet_account",
    "fieldtype": "Link",
    "label": "Wallet Account",
-   "options": "Account",
-   "depends_on": "eval:doc.enable_collection || doc.enable_payouts",
    "mandatory_depends_on": "eval:doc.enable_collection || doc.enable_payouts",
-   "description": "TZS Bank or Cash account that mirrors your Snippe balance. Collections add to it and payouts, with their fees, take from it, so its balance matches the Snippe Dashboard."
+   "options": "Account"
   },
   {
+   "depends_on": "eval:doc.enable_collection || doc.enable_payouts",
    "description": "Expense account for the fees Snippe charges on collections and payouts",
    "fieldname": "fees_account",
    "fieldtype": "Link",
@@ -170,7 +171,7 @@
   }
  ],
  "links": [],
- "modified": "2026-10-25 06:38:50.690375",
+ "modified": "2026-10-25 07:43:28.964777",
  "modified_by": "Administrator",
  "module": "Frappe Snippe",
  "name": "Snippe Setting",

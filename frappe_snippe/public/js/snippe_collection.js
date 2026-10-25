@@ -2,12 +2,28 @@ const SNIPPE_PAYMENT_METHOD =
 	"frappe_snippe.frappe_snippe.doctype.payment_collection.payment_collection";
 
 // Each company's Snippe Setting flags, sent at login by frappe_snippe.api.client.extend_bootinfo.
+function get_collection_companies() {
+	return Object.keys(frappe.boot.snippe_features || {}).filter(
+		(company) => frappe.boot.snippe_features[company].enable_collection
+	);
+}
+
 function has_snippe_collection(frm) {
-	return Boolean(frappe.boot.snippe_features?.[frm.doc.company]?.enable_collection);
+	// A Customer belongs to no company, so a deposit needs any company that collects.
+	if (frm.doctype === "Customer") return get_collection_companies().length > 0;
+	return get_collection_companies().includes(frm.doc.company);
 }
 
 function can_pay_via_snippe(frm) {
 	if (frm.is_new() || !has_snippe_collection(frm)) return false;
+	if (frm.doctype === "Customer") return true;
+	if (frm.doctype === "Loan") {
+		return (
+			frm.doc.docstatus === 1 &&
+			frm.doc.applicant_type === "Customer" &&
+			frm.doc.total_payment > frm.doc.total_amount_paid
+		);
+	}
 	if (frm.doc.docstatus === 0) return true;
 	return (
 		frm.doctype === "Sales Invoice" &&
@@ -18,15 +34,26 @@ function can_pay_via_snippe(frm) {
 
 function open_snippe_payment_dialog(frm, payment_row) {
 	if (frm.is_dirty()) {
-		frappe.msgprint(__("Save the invoice before paying via Snippe."));
+		frappe.msgprint(__("Save the document before taking payment."));
 		return;
 	}
 
 	const args = { doctype: frm.doctype, name: frm.doc.name, payment_row: payment_row || null };
-	frappe.xcall(`${SNIPPE_PAYMENT_METHOD}.get_invoice_payment`, args).then((defaults) => {
+	frappe.xcall(`${SNIPPE_PAYMENT_METHOD}.get_payment_defaults`, args).then((defaults) => {
+		const companies = get_collection_companies();
+		const company_field = {
+			fieldname: "company",
+			fieldtype: "Link",
+			options: "Company",
+			label: __("Company"),
+			reqd: 1,
+			default: companies.length === 1 ? companies[0] : null,
+			get_query: () => ({ filters: { name: ["in", companies] } }),
+		};
 		const dialog = new frappe.ui.Dialog({
 			title: __("Make Payment"),
 			fields: [
+				...(frm.doctype === "Customer" ? [company_field] : []),
 				{
 					fieldname: "mode_of_payment",
 					fieldtype: "Link",
@@ -59,12 +86,12 @@ function open_snippe_payment_dialog(frm, payment_row) {
 			primary_action_label: __("Send USSD Push"),
 			primary_action(values) {
 				frappe
-					.xcall(`${SNIPPE_PAYMENT_METHOD}.pay_invoice`, { ...args, ...values })
+					.xcall(`${SNIPPE_PAYMENT_METHOD}.make_payment`, { ...args, ...values })
 					.then((collection) => {
 						dialog.hide();
 						frappe.show_alert({
 							message: __(
-								"USSD push sent with {0}. The invoice updates when the customer pays.",
+								"USSD push sent with {0}. It is booked when the customer pays.",
 								[collection]
 							),
 							indicator: "green",
@@ -113,6 +140,16 @@ function show_row_pay_buttons(frm) {
 		);
 	}
 	grid.refresh();
+}
+
+for (const doctype of ["Loan", "Customer"]) {
+	frappe.ui.form.on(doctype, {
+		refresh(frm) {
+			if (can_pay_via_snippe(frm)) {
+				frm.add_custom_button(__("Make Payment"), () => open_snippe_payment_dialog(frm));
+			}
+		},
+	});
 }
 
 for (const doctype of ["Sales Invoice", "POS Invoice"]) {

@@ -17,7 +17,7 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "Collections",
-   "link_count": 6,
+   "link_count": 5,
    "link_type": "DocType",
    "onboard": 0,
    "type": "Card Break"
@@ -75,18 +75,8 @@
   {
    "hidden": 0,
    "is_query_report": 0,
-   "label": "Loan",
-   "link_count": 0,
-   "link_to": "Loan",
-   "link_type": "DocType",
-   "onboard": 0,
-   "type": "Link"
-  },
-  {
-   "hidden": 0,
-   "is_query_report": 0,
    "label": "Payouts",
-   "link_count": 8,
+   "link_count": 7,
    "link_type": "DocType",
    "onboard": 0,
    "type": "Card Break"
@@ -157,16 +147,6 @@
    "label": "Expense Claim",
    "link_count": 0,
    "link_to": "Expense Claim",
-   "link_type": "DocType",
-   "onboard": 0,
-   "type": "Link"
-  },
-  {
-   "hidden": 0,
-   "is_query_report": 0,
-   "label": "Loan",
-   "link_count": 0,
-   "link_to": "Loan",
    "link_type": "DocType",
    "onboard": 0,
    "type": "Link"
@@ -279,7 +259,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-10-25 13:00:00.000000",
+ "modified": "2026-10-25 15:00:00.000000",
  "modified_by": "Administrator",
  "module": "Frappe Snippe",
  "name": "Snippe",

@@ -18,6 +18,7 @@ from frappe_snippe.tests.test_snippe_setting import make_payout_setting
 COMPANY = "Wind Power LLC"
 CASH = "Cash - WP"
 FEES = "Administrative Expenses - WP"
+POSTING_DATE = "2026-10-20"
 LENDING_LOAN_MODULE = "lending.loan_management.doctype.loan.loan"
 
 
@@ -35,6 +36,7 @@ def make_disbursement(**row_values):
 			"doctype": "Payment Disbursement",
 			"name": "PAY-DIS-TEST",
 			"company": COMPANY,
+			"posting_date": POSTING_DATE,
 			"paid_from_account": CASH,
 			"items": [
 				{
@@ -94,6 +96,7 @@ class TestJournalEntryPosting(InMemoryRowTestCase):
 		_disbursement, _row, journal_entry = self.book_fee_payout()
 		self.assertEqual(journal_entry.docstatus, 1)
 		self.assertEqual((journal_entry.voucher_type, journal_entry.cheque_no), ("Bank Entry", "po_ref"))
+		self.assertEqual(str(journal_entry.posting_date), POSTING_DATE)
 		self.assertIn("PAY-DIS-TEST row 1", journal_entry.user_remark)
 		lines = {line.account: (line.debit, line.credit) for line in journal_entry.accounts}
 		self.assertEqual(lines, {FEES: (350, 0), CASH: (0, 350)})
@@ -236,8 +239,10 @@ class TestCompletedPayoutBooking(FrappeTestCase):
 		loan_entry.update.assert_called_once_with(
 			{
 				"disbursement_account": CASH,
+				"disbursement_date": POSTING_DATE,
+				"posting_date": POSTING_DATE,
 				"reference_number": "po_ref",
-				"reference_date": frappe.utils.nowdate(),
+				"reference_date": POSTING_DATE,
 			}
 		)
 		self.assertEqual([line["account"] for line in make.call_args.args[2]], [FEES])

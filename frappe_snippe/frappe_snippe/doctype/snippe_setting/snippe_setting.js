@@ -1,6 +1,6 @@
 frappe.ui.form.on("Snippe Setting", {
 	setup(frm) {
-		frm.set_query("collection_account", (doc) => ({
+		frm.set_query("wallet_account", (doc) => ({
 			filters: {
 				company: doc.company,
 				account_type: ["in", ["Bank", "Cash"]],

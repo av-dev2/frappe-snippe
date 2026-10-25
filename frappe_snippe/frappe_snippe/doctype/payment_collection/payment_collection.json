@@ -32,6 +32,7 @@
   "hidden_section",
   "idempotency_key",
   "payment_row",
+  "payment_request",
   "retry_of",
   "snippe_event_id",
   "raw_response"
@@ -97,8 +98,8 @@
    "fieldtype": "Link",
    "label": "Mode of Payment",
    "options": "Mode of Payment",
-   "reqd": 1,
-   "description": "A Mode of Payment of type Phone. Its own account may differ from the Wallet Account."
+   "description": "A Mode of Payment of type Phone. Its own account may differ from the Wallet Account.",
+   "mandatory_depends_on": "eval:!doc.payment_request"
   },
   {
    "fieldname": "phone_number",
@@ -249,6 +250,14 @@
    "description": "The POS invoice payments row this collection pays."
   },
   {
+   "fieldname": "payment_request",
+   "fieldtype": "Link",
+   "label": "Payment Request",
+   "options": "Payment Request",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
    "fieldname": "retry_of",
    "fieldtype": "Link",
    "label": "Retry Of",
@@ -278,7 +287,7 @@
  "is_submittable": 1,
  "autoname": "naming_series:",
  "links": [],
- "modified": "2026-10-06 17:00:00.000000",
+ "modified": "2026-10-26 11:00:00.000000",
  "modified_by": "Administrator",
  "module": "Frappe Snippe",
  "name": "Payment Collection",

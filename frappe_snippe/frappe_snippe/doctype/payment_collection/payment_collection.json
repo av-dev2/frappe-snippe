@@ -32,6 +32,7 @@
   "hidden_section",
   "idempotency_key",
   "payment_row",
+  "retry_of",
   "snippe_event_id",
   "raw_response"
  ],
@@ -110,8 +111,9 @@
    "fieldname": "total_amount",
    "fieldtype": "Currency",
    "label": "Total Amount",
-   "read_only": 1,
-   "in_list_view": 1
+   "in_list_view": 1,
+   "read_only_depends_on": "eval:(doc.references || []).length",
+   "reqd": 1
   },
   {
    "default": "0",
@@ -145,7 +147,7 @@
    "fieldtype": "Table",
    "label": "References",
    "options": "Payment Collection Reference",
-   "reqd": 1
+   "description": "Leave empty to take a customer deposit, which is booked as an advance."
   },
   {
    "fieldname": "snippe_details_section",
@@ -159,7 +161,8 @@
    "label": "Snippe Reference",
    "read_only": 1,
    "in_standard_filter": 1,
-   "search_index": 1
+   "search_index": 1,
+   "no_copy": 1
   },
   {
    "fieldname": "status",
@@ -169,14 +172,16 @@
    "default": "Draft",
    "read_only": 1,
    "in_standard_filter": 1,
-   "in_list_view": 1
+   "in_list_view": 1,
+   "no_copy": 1
   },
   {
    "fieldname": "failure_reason",
    "fieldtype": "Small Text",
    "label": "Failure Reason",
    "read_only": 1,
-   "depends_on": "eval:doc.status=='Failed'"
+   "depends_on": "eval:doc.status=='Failed'",
+   "no_copy": 1
   },
   {
    "fieldname": "wallet_journal_entry",
@@ -184,7 +189,8 @@
    "label": "Wallet Journal Entry",
    "options": "Journal Entry",
    "read_only": 1,
-   "description": "For a POS invoice payment: moves the money from the Mode of Payment account into the Wallet Account and books Snippe's fee."
+   "description": "For a POS invoice payment: moves the money from the Mode of Payment account into the Wallet Account and books Snippe's fee.",
+   "no_copy": 1
   },
   {
    "fieldname": "column_break_2",
@@ -195,28 +201,32 @@
    "fieldtype": "Data",
    "label": "Card Payment URL",
    "read_only": 1,
-   "depends_on": "eval:doc.payment_method=='Card'"
+   "depends_on": "eval:doc.payment_method=='Card'",
+   "no_copy": 1
   },
   {
    "fieldname": "payment_qr_code",
    "fieldtype": "Small Text",
    "label": "Payment QR Code (EMV)",
    "read_only": 1,
-   "depends_on": "eval:doc.payment_method=='Dynamic QR'"
+   "depends_on": "eval:doc.payment_method=='Dynamic QR'",
+   "no_copy": 1
   },
   {
    "fieldname": "checkout_url",
    "fieldtype": "Data",
    "label": "Checkout URL",
    "read_only": 1,
-   "depends_on": "eval:doc.payment_method=='Hosted Session'"
+   "depends_on": "eval:doc.payment_method=='Hosted Session'",
+   "no_copy": 1
   },
   {
    "fieldname": "payment_link_url",
    "fieldtype": "Data",
    "label": "Payment Link URL (Short)",
    "read_only": 1,
-   "depends_on": "eval:doc.payment_method=='Hosted Session'"
+   "depends_on": "eval:doc.payment_method=='Hosted Session'",
+   "no_copy": 1
   },
   {
    "fieldname": "hidden_section",
@@ -228,7 +238,8 @@
    "fieldtype": "Data",
    "label": "Idempotency Key",
    "read_only": 1,
-   "hidden": 1
+   "hidden": 1,
+   "no_copy": 1
   },
   {
    "fieldname": "payment_row",
@@ -238,11 +249,20 @@
    "description": "The POS invoice payments row this collection pays."
   },
   {
+   "fieldname": "retry_of",
+   "fieldtype": "Link",
+   "label": "Retry Of",
+   "options": "Payment Collection",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
    "fieldname": "snippe_event_id",
    "fieldtype": "Data",
    "label": "Snippe Event ID",
    "read_only": 1,
-   "hidden": 1
+   "hidden": 1,
+   "no_copy": 1
   },
   {
    "fieldname": "raw_response",
@@ -250,7 +270,8 @@
    "options": "JSON",
    "label": "Raw API Response",
    "read_only": 1,
-   "hidden": 1
+   "hidden": 1,
+   "no_copy": 1
   }
  ],
  "index_web_pages_for_search": 0,

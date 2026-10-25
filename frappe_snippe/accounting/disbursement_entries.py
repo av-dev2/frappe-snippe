@@ -118,15 +118,14 @@ def make_journal_entry(disbursement, row, debit_lines):
 	if not debit_lines:
 		return None
 
-	today = nowdate()
 	journal_entry = frappe.new_doc("Journal Entry")
 	journal_entry.update(
 		{
 			"voucher_type": "Bank Entry",
 			"company": disbursement.company,
-			"posting_date": today,
+			"posting_date": disbursement.posting_date,
 			"cheque_no": row.snippe_reference,
-			"cheque_date": today,
+			"cheque_date": disbursement.posting_date,
 			"user_remark": get_payout_remark(disbursement, row),
 		}
 	)
@@ -158,8 +157,10 @@ def make_loan_disbursement_entry(disbursement, row):
 	entry.update(
 		{
 			"disbursement_account": disbursement.paid_from_account,
+			"disbursement_date": disbursement.posting_date,
+			"posting_date": disbursement.posting_date,
 			"reference_number": row.snippe_reference,
-			"reference_date": nowdate(),
+			"reference_date": disbursement.posting_date,
 		}
 	)
 	return save_entry(entry)

@@ -196,7 +196,7 @@ def create_payment_entry(collection_doc, paid_amount, fee_amount=0):
 	pe.party_type = "Customer"
 	pe.party = collection_doc.customer
 
-	pe.paid_to = setting.get_account("collection_account")
+	pe.paid_to = setting.get_account("wallet_account")
 	pe.paid_amount = flt(paid_amount) - flt(fee_amount)
 	pe.received_amount = pe.paid_amount
 	pe.reference_no = collection_doc.snippe_reference

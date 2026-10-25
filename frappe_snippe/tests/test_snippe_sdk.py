@@ -13,6 +13,7 @@ from frappe_snippe.api.client import (
 	to_snippe_amount,
 )
 from frappe_snippe.frappe_snippe.doctype.payment_disbursement.payment_disbursement import (
+	get_payout_channel,
 	get_salary_slip_rows,
 	process_disbursement_queue,
 )
@@ -373,12 +374,16 @@ class TestPayoutResume(FrappeTestCase):
 class TestPayrollDisbursementRows(FrappeTestCase):
 	def test_only_salary_slips_with_pay_left_become_rows(self):
 		slips = [
-			frappe._dict(name="SAL-1", employee_name="Asha"),
-			frappe._dict(name="SAL-2", employee_name="Juma"),
+			frappe._dict(name="SAL-1", employee="EMP-1", employee_name="Asha"),
+			frappe._dict(name="SAL-2", employee="EMP-2", employee_name="Juma"),
+		]
+		employees = [
+			frappe._dict(name=name, payout_channel=None, bank_ac_no="0150", cell_number=None)
+			for name in ("EMP-1", "EMP-2")
 		]
 		with (
 			patch(f"{DISBURSEMENT_MODULE}.frappe.has_permission") as has_permission,
-			patch(f"{DISBURSEMENT_MODULE}.frappe.get_all", return_value=slips),
+			patch(f"{DISBURSEMENT_MODULE}.frappe.get_all", side_effect=[slips, employees]),
 			patch(
 				f"{DISBURSEMENT_MODULE}.get_amounts_left_to_pay", return_value={"SAL-1": 0, "SAL-2": 450000}
 			) as left_to_pay,
@@ -396,6 +401,7 @@ class TestPayrollDisbursementRows(FrappeTestCase):
 					"recipient_name": "Juma",
 					"amount": 450000,
 					"channel": "Bank Transfer",
+					"phone_number": None,
 				}
 			],
 		)
@@ -406,3 +412,52 @@ class TestPayrollDisbursementRows(FrappeTestCase):
 			patch(f"{DISBURSEMENT_MODULE}.frappe.get_all", return_value=[]),
 		):
 			self.assertEqual(get_salary_slip_rows("HR-PRUN-0001"), [])
+
+
+@patch.object(Document, "db_set")
+class TestPayoutPhonesAndStatus(FrappeTestCase):
+	def test_mobile_money_row_without_phone_blocks_only_submit(self, db_set):
+		disbursement = make_disbursement(
+			[mobile_item(phone_number=None), mobile_item(name="row-2", idx=2, phone_number=None)]
+		)
+		with self.assertRaisesRegex(frappe.ValidationError, "Mobile Money rows 1, 2"):
+			disbursement.before_submit()
+
+	def test_blank_phone_is_taken_from_the_payee(self, db_set):
+		row = frappe.get_doc(
+			{
+				"doctype": "Payment Disbursement Item",
+				"reference_doctype": "Expense Claim",
+				"reference_name": "EC-1",
+			}
+		)
+		with (
+			patch.object(row, "get_party", return_value=("Employee", "EMP-1")),
+			patch("frappe.db.get_value", return_value="0712345678") as get_value,
+		):
+			row.set_party_phone()
+
+		get_value.assert_called_once_with("Employee", "EMP-1", "cell_number")
+		self.assertEqual(row.phone_number, "0712345678")
+
+	def test_payroll_channel_follows_the_employee(self, db_set):
+		cases = [
+			(
+				frappe._dict(payout_channel="Mobile Money", bank_ac_no="0150", cell_number=None),
+				"Mobile Money",
+			),
+			(frappe._dict(payout_channel=None, bank_ac_no=None, cell_number="0712"), "Mobile Money"),
+			(frappe._dict(payout_channel=None, bank_ac_no="0150", cell_number="0712"), "Bank Transfer"),
+		]
+		for employee, channel in cases:
+			self.assertEqual(get_payout_channel(employee), channel, employee)
+
+	def test_owner_is_told_once_when_the_batch_ends(self, db_set):
+		disbursement = make_disbursement([mobile_item(status="Completed")], status="Processing")
+		with patch(f"{DISBURSEMENT_MODULE}.notify_owner") as notify_owner:
+			disbursement.update_status()
+			disbursement.status = "Completed"
+			disbursement.update_status()
+
+		db_set.assert_called_once_with("status", "Completed", notify=True)
+		notify_owner.assert_called_once()

@@ -5,14 +5,18 @@ import frappe
 from erpnext.accounts.utils import get_balance_on
 from frappe import _
 from frappe.model.document import Document
-from frappe.utils import cint, flt
+from frappe.utils import cint, flt, get_url
+from frappe.utils.verified_command import get_signed_params
 
 from frappe_snippe.accounting.wallet_entries import post_wallet_entry
 from frappe_snippe.api.client import (
+	SNIPPE_CURRENCY,
 	get_snippe_client,
 	snippe_errors_as_messages,
+	to_snippe_amount,
 	validate_snippe_account_currency,
 )
+from frappe_snippe.api.payment_gateway import remove_payment_gateway, setup_payment_gateway
 
 
 class SnippeSetting(Document):
@@ -88,6 +92,26 @@ class SnippeSetting(Document):
 				_("Set the {0} in Snippe Setting {1}.").format(_(self.meta.get_label(fieldname)), self.name)
 			)
 		return account
+
+	def on_update(self):
+		setup_payment_gateway(self)
+
+	def on_trash(self):
+		remove_payment_gateway(self.company)
+
+	def validate_transaction_currency(self, currency: str):
+		"""Payment Gateway controller check; Snippe collects in TZS only."""
+		if currency != SNIPPE_CURRENCY:
+			frappe.throw(_("Snippe collects payments in {0} only.").format(SNIPPE_CURRENCY))
+
+	def validate_minimum_transaction_amount(self, currency: str, amount: float):
+		to_snippe_amount(amount)
+
+	def get_payment_url(self, **kwargs) -> str:
+		"""Signed Payment Gateway link; the checkout opens only when the payer follows it."""
+		return get_url(
+			"/snippe_checkout?" + get_signed_params({"payment_request": kwargs["reference_docname"]})
+		)
 
 	@frappe.whitelist()
 	def get_balance(self) -> dict:

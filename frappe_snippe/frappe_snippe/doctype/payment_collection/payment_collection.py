@@ -5,7 +5,7 @@ from frappe import _
 from frappe.contacts.doctype.address.address import get_default_address
 from frappe.contacts.doctype.contact.contact import get_default_contact
 from frappe.model.document import Document
-from frappe.utils import cint, flt
+from frappe.utils import cint, flt, nowdate
 from snippe import Customer
 
 from frappe_snippe.api.client import (
@@ -24,6 +24,8 @@ from frappe_snippe.api.client import (
 )
 from frappe_snippe.api.webhooks import get_webhook_url
 
+INVOICE_DOCTYPES = ("Sales Invoice", "POS Invoice")
+
 
 class PaymentCollection(Document):
 	def before_insert(self):
@@ -35,12 +37,55 @@ class PaymentCollection(Document):
 			get_snippe_setting(self.company).validate_collection_enabled()
 		if not is_valid_idempotency_key(self.idempotency_key):
 			self.idempotency_key = new_idempotency_key()
+		if not self.phone_number and self.customer:
+			self.phone_number = frappe.db.get_value("Customer", self.customer, "mobile_no")
 		if self.phone_number:
 			self.phone_number = normalize_phone(self.phone_number)
 		if self.allow_custom_amount and self.payment_method != "Hosted Session":
 			frappe.throw(_("Allow Custom Amount works only with the Hosted Session payment method."))
 
 		validate_rows_currency(self.references)
+		self.validate_mode_of_payment()
+		self.validate_draft_invoice()
+
+	def validate_mode_of_payment(self):
+		if (
+			self.mode_of_payment
+			and frappe.get_cached_value("Mode of Payment", self.mode_of_payment, "type") != "Phone"
+		):
+			frappe.throw(_("Mode of Payment {0} must be of type Phone.").format(self.mode_of_payment))
+
+	def validate_draft_invoice(self):
+		drafts = [row for row in self.references if is_draft_invoice(row)]
+		if drafts and len(self.references) > 1:
+			frappe.throw(_("A draft invoice must be the only reference of a Payment Collection."))
+
+		for row in self.references:
+			if row.reference_doctype == "POS Invoice" and row not in drafts:
+				frappe.throw(
+					_("Row #{0}: Only a draft POS Invoice can be paid through Snippe.").format(row.idx)
+				)
+
+	def get_draft_invoice(self):
+		"""The draft invoice this collection pays; it gets a payment row or an advance, not a Payment Entry."""
+		row = self.references[0]
+		if is_draft_invoice(row):
+			return frappe.get_doc(row.reference_doctype, row.reference_name)
+
+	def has_open_references(self) -> bool:
+		"""Whether a Payment Entry can still be allocated to every reference."""
+		for row in self.references:
+			if row.reference_doctype == "POS Invoice":
+				return False
+			if row.reference_doctype == "Sales Invoice" and (
+				flt(frappe.db.get_value("Sales Invoice", row.reference_name, "outstanding_amount")) <= 0
+			):
+				return False
+		return True
+
+	def before_submit(self):
+		if self.payment_method != "Hosted Session" and not self.phone_number:
+			frappe.throw(_("Phone Number is required for {0}.").format(_(self.payment_method)))
 
 	def on_submit(self):
 		self.process_collection()
@@ -53,9 +98,6 @@ class PaymentCollection(Document):
 
 	def process_collection(self):
 		is_session = self.payment_method == "Hosted Session"
-		if not is_session and not self.phone_number:
-			frappe.throw(_("Phone Number is required for {0}.").format(_(self.payment_method)))
-
 		with get_snippe_client(self.company) as client, snippe_errors_as_messages():
 			values = self.create_session(client) if is_session else self.create_payment(client)
 		self.db_set(values)
@@ -222,3 +264,84 @@ class PaymentCollection(Document):
 			"postcode": address.pincode,
 			"country": country_code.upper() if country_code else None,
 		}
+
+
+def is_draft_invoice(row) -> bool:
+	return (
+		row.reference_doctype in INVOICE_DOCTYPES
+		and bool(row.reference_name)
+		and frappe.db.get_value(row.reference_doctype, row.reference_name, "docstatus") == 0
+	)
+
+
+@frappe.whitelist()
+def get_invoice_payment(doctype: str, name: str, payment_row: str | None = None) -> dict:
+	"""Defaults for the Make Payment dialog of an invoice."""
+	invoice = get_payable_invoice(doctype, name)
+	row = next((row for row in invoice.payments if row.name == payment_row), frappe._dict())
+	return {
+		"phone_number": invoice.contact_mobile
+		or frappe.db.get_value("Customer", invoice.customer, "mobile_no"),
+		"mode_of_payment": row.mode_of_payment,
+		"amount": flt(row.amount) or get_amount_left(invoice, payment_row),
+	}
+
+
+@frappe.whitelist()
+def pay_invoice(
+	doctype: str,
+	name: str,
+	phone_number: str,
+	mode_of_payment: str,
+	amount: float,
+	payment_row: str | None = None,
+) -> str:
+	"""Send the USSD push for an invoice; the webhook books the payment once the customer approves it."""
+	invoice = get_payable_invoice(doctype, name)
+	amount_left = get_amount_left(invoice, payment_row)
+	if not 0 < flt(amount) <= amount_left:
+		frappe.throw(_("Amount must be more than 0 and at most {0}.").format(amount_left))
+
+	collection = frappe.get_doc(
+		{
+			"doctype": "Payment Collection",
+			# Inserted submitted, so validation runs once and the USSD push goes out on submit.
+			"docstatus": 1,
+			"company": invoice.company,
+			"customer": invoice.customer,
+			"posting_date": nowdate(),
+			"payment_method": "Mobile Money",
+			"phone_number": phone_number,
+			"mode_of_payment": mode_of_payment,
+			"payment_row": payment_row,
+			"references": [
+				{"reference_doctype": doctype, "reference_name": name, "allocated_amount": flt(amount)}
+			],
+		}
+	)
+	# Whoever may edit a draft invoice may take its payment; a submitted one needs collection rights.
+	collection.flags.ignore_permissions = invoice.docstatus == 0
+	collection.insert()
+	return collection.name
+
+
+def get_payable_invoice(doctype: str, name: str):
+	if doctype not in INVOICE_DOCTYPES:
+		frappe.throw(_("Snippe can pay only a Sales Invoice or a POS Invoice."))
+
+	invoice = frappe.get_doc(doctype, name)
+	invoice.check_permission("write" if invoice.docstatus == 0 else "read")
+	if invoice.docstatus == 2 or (invoice.docstatus == 1 and doctype == "POS Invoice"):
+		frappe.throw(_("{0} {1} cannot be paid through Snippe.").format(_(doctype), name))
+	return invoice
+
+
+def get_amount_left(invoice, payment_row: str | None = None) -> float:
+	"""What Snippe may still collect: the outstanding amount, or for a draft what other payments leave."""
+	if invoice.docstatus == 1:
+		return flt(invoice.outstanding_amount)
+
+	total = flt(invoice.rounded_total or invoice.grand_total)
+	if invoice.is_pos:
+		return total - sum(flt(row.amount) for row in invoice.payments if row.name != payment_row)
+	return total - flt(invoice.total_advance)

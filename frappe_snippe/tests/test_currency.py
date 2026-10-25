@@ -5,7 +5,7 @@ import frappe
 from frappe_snippe.api.client import validate_rows_currency, validate_snippe_currency
 from frappe_snippe.tests.test_collection_customer import make_customer
 from frappe_snippe.tests.test_paid_amount import make_sales_invoice
-from frappe_snippe.tests.test_snippe_sdk import make_collection, make_disbursement, mobile_item
+from frappe_snippe.tests.test_snippe_sdk import make_collection
 from frappe_snippe.tests.test_snippe_setting import TZS_COMPANY, TzsCompanyTestCase, make_snippe_setting
 
 
@@ -62,7 +62,8 @@ class TestSnippeCurrency(TzsCompanyTestCase):
 			validate_rows_currency(rows)
 		validate.assert_called_once_with("Sales Invoice", ["SINV-1", "SINV-2"])
 
-	def test_payout_from_a_non_tzs_account_is_rejected(self):
-		disbursement = make_disbursement([mobile_item()], paid_from_account="Cash - WP")
+	def test_wallet_account_in_another_currency_is_rejected(self):
 		with self.assertRaisesRegex(frappe.ValidationError, "Account Cash - WP is in USD"):
-			disbursement.validate()
+			make_snippe_setting(
+				"Wind Power LLC", wallet_account="Cash - WP", fees_account="Administrative Expenses - WP"
+			)

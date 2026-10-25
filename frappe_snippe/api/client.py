@@ -119,6 +119,14 @@ class SnippeClient(Snippe):
 		body = response.json()
 		return {"sessions": body["data"], **body.get("meta", {})}
 
+	def list_payment_data(self, limit=100, offset=0) -> dict:
+		"""One page of payments, newest first, as Snippe sends them: items, total, limit, offset."""
+		return self._handle_response(self._client.get("/payments", params={"limit": limit, "offset": offset}))
+
+	def list_payout_data(self, limit=100, offset=0) -> dict:
+		"""One page of payouts, newest first, as Snippe sends them: items, total, limit, offset."""
+		return self._handle_response(self._client.get("/payouts", params={"limit": limit, "offset": offset}))
+
 	def trigger_push(self, reference):
 		"""Send the USSD push of a pending mobile payment to the customer's phone again."""
 		return self._handle_response(self._client.post(f"/payments/{quote(reference, safe='')}/push"))

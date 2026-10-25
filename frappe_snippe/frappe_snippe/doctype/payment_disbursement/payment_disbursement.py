@@ -20,7 +20,6 @@ from frappe_snippe.api.client import (
 	snippe_errors_as_messages,
 	to_snippe_amount,
 	validate_rows_currency,
-	validate_snippe_account_currency,
 )
 from frappe_snippe.api.webhooks import get_webhook_url
 
@@ -30,11 +29,12 @@ RESUME_WINDOW_HOURS = 20
 
 class PaymentDisbursement(Document):
 	def validate(self):
-		# validate runs before the mandatory check, so empty links are left to it.
+		# validate runs before the mandatory check, so an empty company is left to it.
 		if self.company:
-			get_snippe_setting(self.company).validate_payouts_enabled()
-		if self.paid_from_account:
-			validate_snippe_account_currency(self.paid_from_account)
+			setting = get_snippe_setting(self.company)
+			setting.validate_payouts_enabled()
+			# Payouts leave the Snippe balance, so they are always credited from its Wallet Account.
+			self.paid_from_account = setting.wallet_account
 		validate_rows_currency(self.items)
 		for row in self.items:
 			to_snippe_amount(row.amount)
@@ -221,6 +221,32 @@ class PaymentDisbursement(Document):
 				}
 			)
 		self.update_status()
+
+
+@frappe.whitelist()
+def get_salary_slip_rows(payroll_entry: str) -> list[dict]:
+	"""Disbursement rows for the payroll's Salary Slips that still have pay left."""
+	frappe.has_permission("Payroll Entry", doc=payroll_entry, throw=True)
+	slips = frappe.get_all(
+		"Salary Slip",
+		filters={"payroll_entry": payroll_entry, "docstatus": 1},
+		fields=["name", "employee_name"],
+	)
+	if not slips:
+		return []
+
+	left_to_pay = get_amounts_left_to_pay("Salary Slip", [slip.name for slip in slips], "")
+	return [
+		{
+			"reference_doctype": "Salary Slip",
+			"reference_name": slip.name,
+			"recipient_name": slip.employee_name,
+			"amount": left_to_pay[slip.name],
+			"channel": "Bank Transfer",
+		}
+		for slip in slips
+		if flt(left_to_pay[slip.name]) > 0
+	]
 
 
 def process_disbursement_queue(payment_disbursement: str):

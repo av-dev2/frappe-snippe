@@ -20,16 +20,14 @@ class SnippeSetting(Document):
 			frappe.throw(_("Session Expiry must be between 1 and 1440 minutes."))
 
 		self.validate_required_fields()
-		self.validate_collection_account()
+		self.validate_wallet_account()
 		self.validate_fees_account()
 
 	def validate_required_fields(self):
 		# The form marks these fields mandatory too, but Frappe checks that only in the browser.
 		required = []
 		if self.enable_collection or self.enable_payouts:
-			required += ["api_key", "webhook_secret", "fees_account"]
-		if self.enable_collection:
-			required.append("collection_account")
+			required += ["api_key", "webhook_secret", "wallet_account", "fees_account"]
 
 		missing = [_(self.meta.get_label(fieldname)) for fieldname in required if not self.get(fieldname)]
 		if missing:
@@ -38,15 +36,15 @@ class SnippeSetting(Document):
 				title=_("Missing Snippe Details"),
 			)
 
-	def validate_collection_account(self):
-		if not self.collection_account:
+	def validate_wallet_account(self):
+		"""The Wallet Account mirrors the Snippe balance, so it is a TZS Bank or Cash ledger."""
+		if not self.wallet_account:
 			return
 
-		self.validate_ledger_account("collection_account")
-		validate_snippe_account_currency(self.collection_account)
-		account_type = frappe.get_cached_value("Account", self.collection_account, "account_type")
-		if account_type not in ("Bank", "Cash"):
-			frappe.throw(_("Collection Account must be a Bank or Cash account."))
+		self.validate_ledger_account("wallet_account")
+		validate_snippe_account_currency(self.wallet_account)
+		if frappe.get_cached_value("Account", self.wallet_account, "account_type") not in ("Bank", "Cash"):
+			frappe.throw(_("Wallet Account must be a Bank or Cash account."))
 
 	def validate_fees_account(self):
 		if not self.fees_account:

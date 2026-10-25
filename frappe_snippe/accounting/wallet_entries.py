@@ -1,5 +1,6 @@
 import frappe
 from erpnext import get_default_cost_center
+from frappe.utils import flt
 
 
 def post_wallet_entry(
@@ -46,3 +47,18 @@ def post_wallet_entry(
 	journal_entry.insert()
 	journal_entry.submit()
 	return journal_entry
+
+
+def add_fee_deduction(payment_entry, fees_account: str, fee_amount: float):
+	"""Snippe keeps its fee, so the Wallet Account receives the net amount and the fee is a deduction."""
+	net_amount = flt(payment_entry.paid_amount) - flt(fee_amount)
+	payment_entry.update({"paid_amount": net_amount, "received_amount": net_amount})
+	if fee_amount:
+		payment_entry.append(
+			"deductions",
+			{
+				"account": fees_account,
+				"cost_center": get_default_cost_center(payment_entry.company),
+				"amount": fee_amount,
+			},
+		)

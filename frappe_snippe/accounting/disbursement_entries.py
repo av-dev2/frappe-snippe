@@ -1,5 +1,6 @@
 import frappe
 from erpnext import get_default_cost_center
+from erpnext.accounts.party import get_party_account
 from frappe import _
 from frappe.utils import nowdate
 
@@ -10,7 +11,12 @@ PAYABLE_SOURCES = {
 	"Purchase Invoice": ("credit_to", "Supplier", "supplier"),
 	"Expense Claim": ("payable_account", "Employee", "employee"),
 	"Employee Advance": ("advance_account", "Employee", "employee"),
+	"Sales Invoice": ("debit_to", "Customer", "customer"),
+	# a Purchase Order holds no payable account, so the supplier's default one is used
+	"Purchase Order": (None, "Supplier", "supplier"),
 }
+# payouts that are advances: the payee's account is debited ahead of the document they relate to
+ADVANCE_SOURCES = ("Employee Advance", "Purchase Order")
 
 
 def book_completed_payout(disbursement, row):
@@ -85,9 +91,15 @@ def get_payable_line(row):
 		}
 
 	account_field, party_type, party_field = PAYABLE_SOURCES[row.reference_doctype]
-	account, party = frappe.db.get_value(
-		row.reference_doctype, row.reference_name, [account_field, party_field]
-	)
+	if account_field:
+		account, party = frappe.db.get_value(
+			row.reference_doctype, row.reference_name, [account_field, party_field]
+		)
+	else:
+		party, company = frappe.db.get_value(
+			row.reference_doctype, row.reference_name, [party_field, "company"]
+		)
+		account = get_party_account(party_type, party, company)
 	line = {
 		"account": account,
 		"party_type": party_type,
@@ -96,7 +108,7 @@ def get_payable_line(row):
 		"reference_name": row.reference_name,
 		"debit_in_account_currency": amount,
 	}
-	if row.reference_doctype == "Employee Advance":
+	if row.reference_doctype in ADVANCE_SOURCES:
 		line["is_advance"] = "Yes"
 	return line
 

@@ -36,8 +36,10 @@ class PaymentDisbursementItem(Document):
 			self.phone_number = frappe.db.get_value(party_type, party, PARTY_PHONE_FIELDS[party_type])
 
 	def get_party(self) -> tuple[str, str]:
-		if self.reference_doctype == "Purchase Invoice":
-			return "Supplier", frappe.db.get_value("Purchase Invoice", self.reference_name, "supplier")
+		if self.reference_doctype in ("Purchase Invoice", "Purchase Order"):
+			return "Supplier", frappe.db.get_value(self.reference_doctype, self.reference_name, "supplier")
+		if self.reference_doctype == "Sales Invoice":
+			return "Customer", frappe.db.get_value("Sales Invoice", self.reference_name, "customer")
 		if self.reference_doctype == "Loan":
 			return frappe.db.get_value("Loan", self.reference_name, ["applicant_type", "applicant"])
 		return "Employee", frappe.db.get_value(self.reference_doctype, self.reference_name, "employee")

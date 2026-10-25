@@ -1,11 +1,12 @@
 import json
+import re
 from collections import defaultdict
 
 import frappe
 from erpnext import get_default_cost_center
 from erpnext.accounts.doctype.sales_invoice.sales_invoice import get_bank_cash_account
 from frappe import _
-from frappe.utils import flt, get_url
+from frappe.utils import flt, get_url, nowdate
 from snippe import WebhookHandler, WebhookVerificationError
 
 from frappe_snippe.api.client import PAYMENT_STATUS, PAYOUT_STATUS, get_snippe_setting
@@ -122,17 +123,60 @@ def process_payment_log(payment_log: str):
 	frappe.get_doc("Payment Log", payment_log).process()
 
 
-def apply_event(payment_log):
-	"""Move the log's Payment Collection or Payment Disbursement to the event's status."""
-	if not payment_log.source_name:
-		return
+def apply_event(payment_log) -> str | None:
+	"""Move the log's Payment Collection or Payment Disbursement to the event's status.
 
+	Returns "Needs Review" when a payment has no document and no customer could be found.
+	"""
 	payload = json.loads(payment_log.raw_payload)["data"]
+	if not payment_log.source_name:
+		if payment_log.event_type == "payment.completed":
+			return book_unlinked_payment(payment_log, payload)
+		return None
+
 	new_status = EVENT_STATUS[payment_log.event_type]
 	if payment_log.direction == "Inbound":
 		process_inbound_webhook(payment_log.source_name, new_status, payment_log.event_id, payload)
 	else:
 		process_outbound_webhook(payment_log.source_name, new_status, payload)
+
+
+def book_unlinked_payment(payment_log, payload) -> str | None:
+	"""A payment with no ERPNext document, such as one through a payment link, becomes a customer advance."""
+	customer = payment_log.customer or find_paying_customer(payload)
+	if not customer:
+		return "Needs Review"
+
+	settlement = (payload.get("settlement") or {}).get("fees") or {}
+	payment_entry = new_receive_payment_entry(
+		company=payment_log.company,
+		customer=customer,
+		paid_amount=flt(payment_log.amount),
+		fee_amount=flt(settlement.get("value")),
+		reference_no=payment_log.snippe_reference,
+		posting_date=nowdate(),
+	)
+	payment_entry.insert(ignore_permissions=True)
+	payment_entry.submit()
+	payment_log.db_set({"customer": customer, "payment_entry": payment_entry.name})
+	return None
+
+
+def find_paying_customer(payload) -> str | None:
+	"""The Customer named in the payment link's ?meta=, else the only Customer with the payer's phone."""
+	url_metadata = (payload.get("metadata") or {}).get("url_metadata") or {}
+	if url_metadata.get("customer") and frappe.db.exists("Customer", url_metadata["customer"]):
+		return url_metadata["customer"]
+
+	# Phones are stored in many formats (0754 000 111, +255754000111), so compare the last 9 digits.
+	digits = re.sub(r"\D", "", (payload.get("customer") or {}).get("phone") or "")[-9:]
+	if len(digits) < 9:
+		return None
+	candidates = frappe.get_all(
+		"Customer", filters={"mobile_no": ("like", "%" + "%".join(digits))}, fields=["name", "mobile_no"]
+	)
+	customers = [row.name for row in candidates if re.sub(r"\D", "", row.mobile_no).endswith(digits)]
+	return customers[0] if len(customers) == 1 else None
 
 
 def process_inbound_webhook(doc_name, new_status, event_id, payload):
@@ -189,7 +233,9 @@ def process_outbound_webhook(doc_name, new_status, payload):
 def book_collection(collection, paid_amount, fee_amount):
 	"""Record a completed collection: a Payment Entry, or for a draft invoice a payment row or an advance."""
 	invoice = collection.get_draft_invoice()
-	if invoice and invoice.is_pos:
+	if collection.get_loan():
+		add_loan_repayment(collection, paid_amount, fee_amount)
+	elif invoice and invoice.is_pos:
 		add_pos_payment(invoice, collection, paid_amount, fee_amount)
 	elif invoice:
 		add_advance(invoice, create_payment_entry(collection, paid_amount, fee_amount, allocate=False))
@@ -206,13 +252,48 @@ def book_collection(collection, paid_amount, fee_amount):
 		)
 
 
+def add_loan_repayment(collection, paid_amount, fee_amount):
+	"""Repay the Loan into the Wallet Account; Snippe's fee leaves the wallet in its own entry."""
+	setting = get_snippe_setting(collection.company)
+	row = collection.references[0]
+	repayment = frappe.get_doc(
+		{
+			"doctype": "Loan Repayment",
+			"against_loan": row.reference_name,
+			"applicant_type": "Customer",
+			"applicant": collection.customer,
+			"company": collection.company,
+			"posting_date": collection.posting_date,
+			"amount_paid": paid_amount,
+			"payment_account": setting.get_account("wallet_account"),
+			"reference_number": collection.snippe_reference,
+			"reference_date": collection.posting_date,
+		}
+	)
+	repayment.insert(ignore_permissions=True)
+	repayment.submit()
+	row.db_set("status", "Paid")
+
+	if fee_amount:
+		fee_entry = make_wallet_journal_entry(
+			collection,
+			{
+				setting.get_account("fees_account"): fee_amount,
+				setting.get_account("wallet_account"): -fee_amount,
+			},
+		)
+		collection.db_set("wallet_journal_entry", fee_entry.name)
+
+
 def add_pos_payment(invoice, collection, paid_amount, fee_amount):
 	"""Fill the POS invoice's Phone payment row; the invoice books the payment when it is submitted."""
 	row = find_payment_row(invoice, collection)
 	row.update({"amount": paid_amount, "reference_no": collection.snippe_reference})
 	invoice.save(ignore_permissions=True)
 
-	if journal_entry := make_wallet_journal_entry(collection, paid_amount, fee_amount):
+	if journal_entry := make_wallet_journal_entry(
+		collection, get_pos_wallet_amounts(collection, paid_amount, fee_amount)
+	):
 		collection.db_set("wallet_journal_entry", journal_entry.name)
 	for reference in collection.references:
 		reference.db_set("status", "Paid")
@@ -245,11 +326,11 @@ def add_advance(invoice, payment_entry):
 	invoice.save(ignore_permissions=True)
 
 
-def make_wallet_journal_entry(collection, paid_amount, fee_amount):
+def get_pos_wallet_amounts(collection, paid_amount, fee_amount) -> dict:
 	"""Move a POS payment from its Mode of Payment account into the Wallet Account, less Snippe's fee.
 
 	The submitted POS invoice debits the mode's account, which may be a sales team's own account;
-	this entry credits it back so the Wallet Account matches the Snippe balance.
+	crediting it back keeps the Wallet Account equal to the Snippe balance.
 	"""
 	setting = get_snippe_setting(collection.company)
 	amounts = defaultdict(float)
@@ -257,8 +338,14 @@ def make_wallet_journal_entry(collection, paid_amount, fee_amount):
 	amounts[setting.get_account("wallet_account")] += paid_amount - fee_amount
 	if fee_amount:
 		amounts[setting.get_account("fees_account")] += fee_amount
+	return amounts
 
-	# When the mode posts to the Wallet Account itself, only the fee is left to book.
+
+def make_wallet_journal_entry(collection, amounts: dict):
+	"""Bank Entry for a collection from {account: debit (+) or credit (-)}; None when nothing is left.
+
+	Amounts on the same account cancel out, so a mode that posts to the Wallet Account books only the fee.
+	"""
 	amounts = {account: amount for account, amount in amounts.items() if amount}
 	if not amounts:
 		return None
@@ -304,37 +391,54 @@ def notify_owner(doc, subject: str):
 	).insert(ignore_permissions=True)
 
 
-def create_payment_entry(collection_doc, paid_amount, fee_amount=0, allocate=True):
-	"""Receive what the customer paid, allocated to references in row order, or as an advance.
+def new_receive_payment_entry(
+	*, company, customer, paid_amount, fee_amount, reference_no, posting_date, mode_of_payment=None
+):
+	"""Unsaved Payment Entry receiving into the Wallet Account.
 
-	Snippe keeps its fee, so the Snippe account receives the net amount and the fee is a deduction.
+	Snippe keeps its fee, so the Wallet Account receives the net amount and the fee is a deduction.
 	"""
-	setting = get_snippe_setting(collection_doc.company)
-
+	setting = get_snippe_setting(company)
+	net_amount = flt(paid_amount) - flt(fee_amount)
 	pe = frappe.new_doc("Payment Entry")
-	pe.payment_type = "Receive"
-	pe.posting_date = collection_doc.posting_date
-	pe.company = collection_doc.company
-	pe.party_type = "Customer"
-	pe.party = collection_doc.customer
-	pe.mode_of_payment = collection_doc.mode_of_payment
-
-	pe.paid_to = setting.get_account("wallet_account")
-	pe.paid_amount = flt(paid_amount) - flt(fee_amount)
-	pe.received_amount = pe.paid_amount
-	pe.reference_no = collection_doc.snippe_reference
-	pe.reference_date = collection_doc.posting_date
-
+	pe.update(
+		{
+			"payment_type": "Receive",
+			"posting_date": posting_date,
+			"company": company,
+			"party_type": "Customer",
+			"party": customer,
+			"mode_of_payment": mode_of_payment,
+			"paid_to": setting.get_account("wallet_account"),
+			"paid_amount": net_amount,
+			"received_amount": net_amount,
+			"reference_no": reference_no,
+			"reference_date": posting_date,
+		}
+	)
 	if fee_amount:
 		pe.append(
 			"deductions",
 			{
 				"account": setting.get_account("fees_account"),
-				"cost_center": get_default_cost_center(collection_doc.company),
+				"cost_center": get_default_cost_center(company),
 				"amount": fee_amount,
 			},
 		)
+	return pe
 
+
+def create_payment_entry(collection_doc, paid_amount, fee_amount=0, allocate=True):
+	"""Receive what the customer paid, allocated to references in row order, or as an advance."""
+	pe = new_receive_payment_entry(
+		company=collection_doc.company,
+		customer=collection_doc.customer,
+		paid_amount=paid_amount,
+		fee_amount=fee_amount,
+		reference_no=collection_doc.snippe_reference,
+		posting_date=collection_doc.posting_date,
+		mode_of_payment=collection_doc.mode_of_payment,
+	)
 	allocations = collection_doc.get_reference_allocations(paid_amount) if allocate else []
 	for row, amount in allocations:
 		pe.append(

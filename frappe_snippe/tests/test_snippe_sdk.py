@@ -12,6 +12,7 @@ from frappe_snippe.api.client import (
 	normalize_phone,
 	to_snippe_amount,
 )
+from frappe_snippe.frappe_snippe.doctype.payment_disbursement import payees
 from frappe_snippe.frappe_snippe.doctype.payment_disbursement.payment_disbursement import (
 	get_payout_channel,
 	get_salary_slip_rows,
@@ -431,13 +432,18 @@ class TestPayoutPhonesAndStatus(FrappeTestCase):
 				"reference_name": "EC-1",
 			}
 		)
+		row.channel = "Mobile Money"
 		with (
-			patch.object(row, "get_party", return_value=("Employee", "EMP-1")),
-			patch("frappe.db.get_value", return_value="0712345678") as get_value,
+			patch.object(
+				payees, "get_parties", return_value={("Expense Claim", "EC-1"): ("Employee", "EMP-1")}
+			),
+			patch.object(
+				payees.frappe, "get_all", return_value=[frappe._dict(name="EMP-1", cell_number="0712345678")]
+			) as get_all,
 		):
-			row.set_party_phone()
+			payees.fill_payee_details([row])
 
-		get_value.assert_called_once_with("Employee", "EMP-1", "cell_number")
+		self.assertEqual(get_all.call_args.args[0], "Employee")
 		self.assertEqual(row.phone_number, "0712345678")
 
 	def test_payroll_channel_follows_the_employee(self, db_set):

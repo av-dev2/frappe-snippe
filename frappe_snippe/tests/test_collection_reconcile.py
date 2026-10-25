@@ -45,10 +45,15 @@ class TestSnippeUpdate(FrappeTestCase):
 			("Completed", {"amount": {"value": 1500, "currency": "TZS"}}),
 		)
 
-	def test_custom_amount_session_amount_is_not_trusted(self):
+	def test_completed_custom_amount_session_is_left_to_the_webhook(self):
 		client = make_client(get_session={"status": "completed", "amount": 10000, "currency": "TZS"})
 		status, payload = make_session_collection(allow_custom_amount=1).get_snippe_update(client)
-		self.assertEqual((status, payload), ("Completed", {"amount": None}))
+		self.assertEqual((status, payload), ("Pending", {}))
+
+	def test_expired_custom_amount_session_is_still_closed(self):
+		client = make_client(get_session={"status": "expired", "amount": 10000, "currency": "TZS"})
+		status, _payload = make_session_collection(allow_custom_amount=1).get_snippe_update(client)
+		self.assertEqual(status, "Expired")
 
 	def test_session_in_progress_stays_pending(self):
 		client = make_client(get_session={"status": "active", "amount": 1500, "currency": "TZS"})

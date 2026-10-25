@@ -1,6 +1,8 @@
 import frappe
+from erpnext.accounts.utils import get_balance_on
 from frappe.tests.utils import FrappeTestCase
 
+from frappe_snippe.accounting.disbursement_entries import book_completed_payout
 from frappe_snippe.api import webhooks
 from frappe_snippe.tests.test_collection_customer import make_collection, make_customer
 from frappe_snippe.tests.test_snippe_setting import (
@@ -12,6 +14,7 @@ from frappe_snippe.tests.test_snippe_setting import (
 )
 
 SERVICE_ITEM = "Snippe Test Service"
+TEST_SUPPLIER = "Snippe Test Supplier"
 
 
 def make_collection_with_references(*amounts, **values):
@@ -66,6 +69,37 @@ class TestReferenceAllocations(FrappeTestCase):
 
 
 def make_sales_invoice(customer, rate):
+	return submit_invoice(
+		{
+			"doctype": "Sales Invoice",
+			"company": TZS_COMPANY,
+			"customer": customer,
+			"currency": "TZS",
+			"selling_price_list": None,
+			"items": [{"item_code": SERVICE_ITEM, "qty": 1, "rate": rate}],
+		}
+	)
+
+
+def make_purchase_invoice(rate):
+	if not frappe.db.exists("Supplier", TEST_SUPPLIER):
+		frappe.get_doc(
+			{"doctype": "Supplier", "supplier_name": TEST_SUPPLIER, "supplier_group": "All Supplier Groups"}
+		).insert()
+
+	return submit_invoice(
+		{
+			"doctype": "Purchase Invoice",
+			"company": TZS_COMPANY,
+			"supplier": TEST_SUPPLIER,
+			"currency": "TZS",
+			"buying_price_list": None,
+			"items": [{"item_code": SERVICE_ITEM, "qty": 1, "rate": rate}],
+		}
+	)
+
+
+def submit_invoice(values):
 	if not frappe.db.exists("Item", SERVICE_ITEM):
 		frappe.get_doc(
 			{
@@ -77,19 +111,33 @@ def make_sales_invoice(customer, rate):
 			}
 		).insert()
 
-	invoice = frappe.get_doc(
-		{
-			"doctype": "Sales Invoice",
-			"company": TZS_COMPANY,
-			"customer": customer,
-			"currency": "TZS",
-			"selling_price_list": None,
-			"items": [{"item_code": SERVICE_ITEM, "qty": 1, "rate": rate}],
-		}
-	)
+	invoice = frappe.get_doc(values)
 	invoice.insert()
 	invoice.submit()
 	return invoice
+
+
+def make_paid_collection(customer, *rates):
+	"""A Payment Collection for one new Sales Invoice per rate."""
+	return frappe.get_doc(
+		{
+			"doctype": "Payment Collection",
+			"company": TZS_COMPANY,
+			"customer": customer,
+			"posting_date": frappe.utils.nowdate(),
+			"payment_method": "Mobile Money",
+			"phone_number": "0712345678",
+			"snippe_reference": "pi_ref",
+			"references": [
+				{
+					"reference_doctype": "Sales Invoice",
+					"reference_name": make_sales_invoice(customer, rate).name,
+					"allocated_amount": rate,
+				}
+				for rate in rates
+			],
+		}
+	).insert()
 
 
 class TestPaymentEntryBooking(TzsCompanyTestCase):
@@ -100,25 +148,7 @@ class TestPaymentEntryBooking(TzsCompanyTestCase):
 		self.setting = make_snippe_setting()
 
 	def make_paid_collection(self, *rates):
-		return frappe.get_doc(
-			{
-				"doctype": "Payment Collection",
-				"company": TZS_COMPANY,
-				"customer": self.customer,
-				"posting_date": frappe.utils.nowdate(),
-				"payment_method": "Mobile Money",
-				"phone_number": "0712345678",
-				"snippe_reference": "pi_ref",
-				"references": [
-					{
-						"reference_doctype": "Sales Invoice",
-						"reference_name": make_sales_invoice(self.customer, rate).name,
-						"allocated_amount": rate,
-					}
-					for rate in rates
-				],
-			}
-		).insert()
+		return make_paid_collection(self.customer, *rates)
 
 	def get_gl_lines(self, payment_entry):
 		return {
@@ -162,8 +192,8 @@ class TestPaymentEntryBooking(TzsCompanyTestCase):
 			webhooks.create_payment_entry(self.make_paid_collection(50000), 50000, 1000)
 
 	def test_company_without_gl_account_is_rejected(self):
-		self.setting.db_set("collection_account", None)
-		with self.assertRaisesRegex(frappe.ValidationError, "Collection Account"):
+		self.setting.db_set("wallet_account", None)
+		with self.assertRaisesRegex(frappe.ValidationError, "Wallet Account"):
 			webhooks.create_payment_entry(self.make_paid_collection(50000), 50000)
 
 
@@ -188,3 +218,39 @@ class TestCustomAmountCollection(TzsCompanyTestCase):
 		collection.allow_custom_amount = 1
 		with self.assertRaisesRegex(frappe.ValidationError, "Hosted Session"):
 			collection.validate()
+
+
+class TestWalletAccountBalance(TzsCompanyTestCase):
+	"""Collections add to the Wallet Account and payouts take from it, so it matches the Snippe balance."""
+
+	def test_wallet_balance_is_collections_less_payouts_and_fees(self):
+		make_snippe_setting(auto_submit_accounting_entries=1)
+		webhooks.create_payment_entry(make_paid_collection(make_customer().name, 50000), 50000, 1000)
+
+		purchase_invoice = make_purchase_invoice(30000)
+		disbursement = frappe.get_doc(
+			{
+				"doctype": "Payment Disbursement",
+				"company": TZS_COMPANY,
+				"items": [
+					{
+						"reference_doctype": "Purchase Invoice",
+						"reference_name": purchase_invoice.name,
+						"recipient_name": TEST_SUPPLIER,
+						"amount": 30000,
+						"channel": "Mobile Money",
+						"phone_number": "0712345678",
+						"snippe_reference": "po_wallet",
+						"status": "Completed",
+						"fee_amount": 1500,
+					}
+				],
+			}
+		)
+		disbursement.validate()
+		book_completed_payout(disbursement, disbursement.items[0])
+
+		self.assertEqual(get_balance_on(TZS_CASH, company=TZS_COMPANY), 50000 - 1000 - 30000 - 1500)
+		self.assertEqual(
+			frappe.db.get_value("Purchase Invoice", purchase_invoice.name, "outstanding_amount"), 0
+		)

@@ -12,13 +12,13 @@
   "column_break_company",
   "enable_collection",
   "enable_payouts",
-  "account_section",
-  "collection_account",
-  "column_break_account",
-  "fees_account",
-  "column_break_hbdu",
+  "section_break_chxw",
+  "wallet_account",
+  "column_break_zdvc",
+  "column_break_yjvz",
   "auto_create_sales_invoice",
   "auto_submit_accounting_entries",
+  "fees_account",
   "collection_section",
   "session_redirect_url",
   "session_expiry_minutes",
@@ -58,11 +58,6 @@
    "label": "Enable Payouts"
   },
   {
-   "depends_on": "eval:doc.enable_collection || doc.enable_payouts",
-   "fieldname": "account_section",
-   "fieldtype": "Section Break"
-  },
-  {
    "fieldname": "api_key",
    "fieldtype": "Password",
    "label": "API Key",
@@ -75,17 +70,13 @@
    "mandatory_depends_on": "eval:doc.enable_collection || doc.enable_payouts"
   },
   {
-   "fieldname": "column_break_account",
-   "fieldtype": "Column Break"
-  },
-  {
-   "depends_on": "enable_collection",
-   "description": "TZS Bank or Cash account that receives the money customers pay through Snippe.",
-   "fieldname": "collection_account",
+   "fieldname": "wallet_account",
    "fieldtype": "Link",
-   "label": "Collection Account",
-   "mandatory_depends_on": "enable_collection",
-   "options": "Account"
+   "label": "Wallet Account",
+   "options": "Account",
+   "depends_on": "eval:doc.enable_collection || doc.enable_payouts",
+   "mandatory_depends_on": "eval:doc.enable_collection || doc.enable_payouts",
+   "description": "TZS Bank or Cash account that mirrors your Snippe balance. Collections add to it and payouts, with their fees, take from it, so its balance matches the Snippe Dashboard."
   },
   {
    "description": "Expense account for the fees Snippe charges on collections and payouts",
@@ -162,16 +153,24 @@
    "fieldtype": "Column Break"
   },
   {
-   "fieldname": "column_break_hbdu",
+   "fieldname": "column_break_lehc",
    "fieldtype": "Column Break"
   },
   {
-   "fieldname": "column_break_lehc",
+   "fieldname": "section_break_chxw",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "column_break_zdvc",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_yjvz",
    "fieldtype": "Column Break"
   }
  ],
  "links": [],
- "modified": "2026-10-24 10:16:32.143322",
+ "modified": "2026-10-25 06:38:50.690375",
  "modified_by": "Administrator",
  "module": "Frappe Snippe",
  "name": "Snippe Setting",

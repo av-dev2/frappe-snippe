@@ -24,6 +24,7 @@
   "status_section",
   "status",
   "hidden_section",
+  "retry_of",
   "queued_on",
   "last_status_check",
   "retry_count"
@@ -51,7 +52,7 @@
    "fieldname": "disbursement_type",
    "fieldtype": "Select",
    "label": "Disbursement Type",
-   "options": "Salary\nPurchase Invoice\nLoan\nEmployee Advance\nExpense Claim",
+   "options": "Salary\nPurchase Invoice\nLoan\nEmployee Advance\nExpense Claim\nCustomer Refund\nSupplier Advance",
    "reqd": 1,
    "in_standard_filter": 1,
    "in_list_view": 1
@@ -164,6 +165,15 @@
    "fieldname": "hidden_section",
    "fieldtype": "Section Break",
    "hidden": 1
+  },
+  {
+   "fieldname": "retry_of",
+   "fieldtype": "Link",
+   "label": "Retry Of",
+   "options": "Payment Disbursement",
+   "read_only": 1,
+   "no_copy": 1,
+   "description": "The disbursement whose failed rows this one sends again."
   },
   {
    "fieldname": "queued_on",

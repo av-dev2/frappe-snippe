@@ -28,10 +28,6 @@ INVOICE_DOCTYPES = ("Sales Invoice", "POS Invoice")
 
 
 class PaymentCollection(Document):
-	def before_insert(self):
-		# calculate total amount
-		self.total_amount = sum(row.allocated_amount for row in self.references)
-
 	def validate(self):
 		if self.company:
 			get_snippe_setting(self.company).validate_collection_enabled()
@@ -44,9 +40,13 @@ class PaymentCollection(Document):
 		if self.allow_custom_amount and self.payment_method != "Hosted Session":
 			frappe.throw(_("Allow Custom Amount works only with the Hosted Session payment method."))
 
+		if self.references:
+			self.total_amount = sum(flt(row.allocated_amount) for row in self.references)
 		validate_rows_currency(self.references)
 		self.validate_mode_of_payment()
+		self.validate_sole_reference()
 		self.validate_draft_invoice()
+		self.validate_loan()
 
 	def validate_mode_of_payment(self):
 		if (
@@ -57,19 +57,67 @@ class PaymentCollection(Document):
 
 	def validate_draft_invoice(self):
 		drafts = [row for row in self.references if is_draft_invoice(row)]
-		if drafts and len(self.references) > 1:
-			frappe.throw(_("A draft invoice must be the only reference of a Payment Collection."))
-
 		for row in self.references:
 			if row.reference_doctype == "POS Invoice" and row not in drafts:
 				frappe.throw(
 					_("Row #{0}: Only a draft POS Invoice can be paid through Snippe.").format(row.idx)
 				)
 
+	def validate_sole_reference(self):
+		"""A draft invoice or a Loan is booked its own way, so it must be the collection's only reference."""
+		if len(self.references) > 1 and any(
+			row.reference_doctype == "Loan" or is_draft_invoice(row) for row in self.references
+		):
+			frappe.throw(_("A draft invoice or a Loan must be the only reference of a Payment Collection."))
+
+	def validate_loan(self):
+		for row in self.references:
+			if row.reference_doctype != "Loan":
+				continue
+			applicant_type, applicant = frappe.db.get_value(
+				"Loan", row.reference_name, ["applicant_type", "applicant"]
+			)
+			if (applicant_type, applicant) != ("Customer", self.customer):
+				frappe.throw(
+					_("Row #{0}: Loan {1} is not a loan of Customer {2}.").format(
+						row.idx, row.reference_name, self.customer
+					)
+				)
+
+	@property
+	def sole_reference(self):
+		return self.references[0] if len(self.references) == 1 else None
+
+	def get_loan(self) -> str | None:
+		row = self.sole_reference
+		return row.reference_name if row and row.reference_doctype == "Loan" else None
+
+	@frappe.whitelist()
+	def resend_push(self):
+		"""Send the USSD push again, for a customer who missed or dismissed it."""
+		self.check_permission("write")
+		if self.payment_method != "Mobile Money" or self.status != "Pending" or not self.snippe_reference:
+			frappe.throw(_("Only a pending Mobile Money collection can send its USSD push again."))
+
+		with get_snippe_client(self.company) as client, snippe_errors_as_messages():
+			client.trigger_push(self.snippe_reference)
+
+	@frappe.whitelist()
+	def retry(self) -> str:
+		"""Ask the customer again with a new collection, after this one failed, expired or was voided."""
+		if self.docstatus != 1 or self.status not in ("Failed", "Expired", "Voided"):
+			frappe.throw(_("Only a failed, expired or voided collection can be retried."))
+
+		# Clear the no-copy fields, or Snippe would answer the old idempotency key with the old payment.
+		retry = frappe.copy_doc(self, ignore_no_copy=False)
+		retry.update({"retry_of": self.name, "posting_date": nowdate(), "docstatus": 1})
+		retry.insert()
+		return retry.name
+
 	def get_draft_invoice(self):
 		"""The draft invoice this collection pays; it gets a payment row or an advance, not a Payment Entry."""
-		row = self.references[0]
-		if is_draft_invoice(row):
+		row = self.sole_reference
+		if row and is_draft_invoice(row):
 			return frappe.get_doc(row.reference_doctype, row.reference_name)
 
 	def has_open_references(self) -> bool:
@@ -274,74 +322,101 @@ def is_draft_invoice(row) -> bool:
 	)
 
 
+PAYABLE_DOCTYPES = (*INVOICE_DOCTYPES, "Loan", "Customer")
+
+
 @frappe.whitelist()
-def get_invoice_payment(doctype: str, name: str, payment_row: str | None = None) -> dict:
-	"""Defaults for the Make Payment dialog of an invoice."""
-	invoice = get_payable_invoice(doctype, name)
-	row = next((row for row in invoice.payments if row.name == payment_row), frappe._dict())
+def get_payment_defaults(doctype: str, name: str, payment_row: str | None = None) -> dict:
+	"""Defaults for the Make Payment dialog of an invoice, a Loan or a Customer deposit."""
+	document = get_payable_document(doctype, name)
+	customer = get_paying_customer(document)
+	row = next((row for row in document.get("payments") or [] if row.name == payment_row), frappe._dict())
 	return {
-		"phone_number": invoice.contact_mobile
-		or frappe.db.get_value("Customer", invoice.customer, "mobile_no"),
+		"phone_number": document.get("contact_mobile")
+		or frappe.db.get_value("Customer", customer, "mobile_no"),
 		"mode_of_payment": row.mode_of_payment,
-		"amount": flt(row.amount) or get_amount_left(invoice, payment_row),
+		"amount": flt(row.amount) or get_amount_left(document, payment_row),
 	}
 
 
 @frappe.whitelist()
-def pay_invoice(
+def make_payment(
 	doctype: str,
 	name: str,
 	phone_number: str,
 	mode_of_payment: str,
 	amount: float,
 	payment_row: str | None = None,
+	company: str | None = None,
 ) -> str:
-	"""Send the USSD push for an invoice; the webhook books the payment once the customer approves it."""
-	invoice = get_payable_invoice(doctype, name)
-	amount_left = get_amount_left(invoice, payment_row)
-	if not 0 < flt(amount) <= amount_left:
+	"""Send the USSD push; the webhook books the payment once the customer approves it.
+
+	A Customer pays a deposit, so its collection has no reference and becomes an advance.
+	"""
+	document = get_payable_document(doctype, name)
+	amount_left = get_amount_left(document, payment_row)
+	if flt(amount) <= 0 or (amount_left is not None and flt(amount) > amount_left):
 		frappe.throw(_("Amount must be more than 0 and at most {0}.").format(amount_left))
 
+	is_deposit = doctype == "Customer"
 	collection = frappe.get_doc(
 		{
 			"doctype": "Payment Collection",
 			# Inserted submitted, so validation runs once and the USSD push goes out on submit.
 			"docstatus": 1,
-			"company": invoice.company,
-			"customer": invoice.customer,
+			"company": company if is_deposit else document.company,
+			"customer": get_paying_customer(document),
 			"posting_date": nowdate(),
 			"payment_method": "Mobile Money",
 			"phone_number": phone_number,
 			"mode_of_payment": mode_of_payment,
 			"payment_row": payment_row,
-			"references": [
-				{"reference_doctype": doctype, "reference_name": name, "allocated_amount": flt(amount)}
-			],
+			"total_amount": flt(amount),
+			"references": []
+			if is_deposit
+			else [{"reference_doctype": doctype, "reference_name": name, "allocated_amount": flt(amount)}],
 		}
 	)
-	# Whoever may edit a draft invoice may take its payment; a submitted one needs collection rights.
-	collection.flags.ignore_permissions = invoice.docstatus == 0
+	# Whoever may edit a draft invoice may take its payment; anything else needs collection rights.
+	collection.flags.ignore_permissions = doctype in INVOICE_DOCTYPES and document.docstatus == 0
 	collection.insert()
 	return collection.name
 
 
-def get_payable_invoice(doctype: str, name: str):
-	if doctype not in INVOICE_DOCTYPES:
-		frappe.throw(_("Snippe can pay only a Sales Invoice or a POS Invoice."))
+def get_payable_document(doctype: str, name: str):
+	if doctype not in PAYABLE_DOCTYPES:
+		frappe.throw(_("Snippe can take payment only for a Sales Invoice, POS Invoice, Loan or Customer."))
 
-	invoice = frappe.get_doc(doctype, name)
-	invoice.check_permission("write" if invoice.docstatus == 0 else "read")
-	if invoice.docstatus == 2 or (invoice.docstatus == 1 and doctype == "POS Invoice"):
+	document = frappe.get_doc(doctype, name)
+	document.check_permission("write" if document.docstatus == 0 and doctype in INVOICE_DOCTYPES else "read")
+	unpayable = (
+		document.docstatus == 2
+		or (doctype == "POS Invoice" and document.docstatus == 1)
+		or (doctype == "Loan" and (document.docstatus != 1 or document.applicant_type != "Customer"))
+	)
+	if unpayable:
 		frappe.throw(_("{0} {1} cannot be paid through Snippe.").format(_(doctype), name))
-	return invoice
+	return document
 
 
-def get_amount_left(invoice, payment_row: str | None = None) -> float:
-	"""What Snippe may still collect: the outstanding amount, or for a draft what other payments leave."""
-	if invoice.docstatus == 1:
-		return flt(invoice.outstanding_amount)
+# where each payable document keeps its customer; invoices use "customer"
+CUSTOMER_FIELDS = {"Customer": "name", "Loan": "applicant"}
 
-	total = flt(invoice.rounded_total or invoice.grand_total)
-	if invoice.is_pos:
-		return total - sum(flt(row.amount) for row in invoice.payments if row.name != payment_row)
-	return total - flt(invoice.total_advance)
+
+def get_paying_customer(document) -> str:
+	return document.get(CUSTOMER_FIELDS.get(document.doctype, "customer"))
+
+
+def get_amount_left(document, payment_row: str | None = None) -> float | None:
+	"""What Snippe may still collect; a Customer deposit has no limit."""
+	if document.doctype == "Customer":
+		return None
+	if document.doctype == "Loan":
+		return flt(document.total_payment) - flt(document.total_amount_paid)
+	if document.docstatus == 1:
+		return flt(document.outstanding_amount)
+
+	total = flt(document.rounded_total or document.grand_total)
+	if document.is_pos:
+		return total - sum(flt(row.amount) for row in document.payments if row.name != payment_row)
+	return total - flt(document.total_advance)

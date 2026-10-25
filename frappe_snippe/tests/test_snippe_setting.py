@@ -69,6 +69,21 @@ def make_payout_setting(**values):
 	)
 
 
+PHONE_MODE = "Snippe Test Phone"
+
+
+def make_phone_mode_of_payment(account=TZS_CASH, company=TZS_COMPANY):
+	"""A Phone Mode of Payment that posts to the given account, by default the TZS Wallet Account."""
+	if frappe.db.exists("Mode of Payment", PHONE_MODE):
+		mode = frappe.get_doc("Mode of Payment", PHONE_MODE)
+	else:
+		mode = frappe.get_doc({"doctype": "Mode of Payment", "mode_of_payment": PHONE_MODE})
+	mode.update(
+		{"type": "Phone", "enabled": 1, "accounts": [{"company": company, "default_account": account}]}
+	)
+	return mode.save()
+
+
 class TzsCompanyTestCase(FrappeTestCase):
 	@classmethod
 	def setUpClass(cls):

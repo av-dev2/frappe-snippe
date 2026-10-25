@@ -5,6 +5,7 @@ from frappe import _
 from frappe.contacts.doctype.address.address import get_default_address
 from frappe.contacts.doctype.contact.contact import get_default_contact
 from frappe.model.document import Document
+from frappe.twofactor import get_qr_svg_code
 from frappe.utils import cint, flt, nowdate
 from snippe import Customer
 
@@ -25,6 +26,8 @@ from frappe_snippe.api.client import (
 from frappe_snippe.api.webhooks import get_webhook_url
 
 INVOICE_DOCTYPES = ("Sales Invoice", "POS Invoice")
+# methods the Make Payment dialog offers; a Hosted Session is opened from the Payment Collection form
+DIALOG_PAYMENT_METHODS = ("Mobile Money", "Card", "Dynamic QR")
 
 
 class PaymentCollection(Document):
@@ -353,11 +356,15 @@ def make_payment(
 	amount: float,
 	payment_row: str | None = None,
 	company: str | None = None,
+	payment_method: str = "Mobile Money",
 ) -> str:
-	"""Send the USSD push; the webhook books the payment once the customer approves it.
+	"""Ask Snippe for the payment: a USSD push, a card checkout or a QR; the webhook books it once paid.
 
 	A Customer pays a deposit, so its collection has no reference and becomes an advance.
 	"""
+	if payment_method not in DIALOG_PAYMENT_METHODS:
+		frappe.throw(_("Payment Method must be one of {0}.").format(", ".join(DIALOG_PAYMENT_METHODS)))
+
 	document = get_payable_document(doctype, name)
 	amount_left = get_amount_left(document, payment_row)
 	if flt(amount) <= 0 or (amount_left is not None and flt(amount) > amount_left):
@@ -372,7 +379,7 @@ def make_payment(
 			"company": company if is_deposit else document.company,
 			"customer": get_paying_customer(document),
 			"posting_date": nowdate(),
-			"payment_method": "Mobile Money",
+			"payment_method": payment_method,
 			"phone_number": phone_number,
 			"mode_of_payment": mode_of_payment,
 			"payment_row": payment_row,
@@ -386,6 +393,27 @@ def make_payment(
 	collection.flags.ignore_permissions = doctype in INVOICE_DOCTYPES and document.docstatus == 0
 	collection.insert()
 	return collection.name
+
+
+@frappe.whitelist()
+def get_payment_progress(collection: str) -> dict:
+	"""Status of a Make Payment collection, with the card link and QR codes the customer pays with."""
+	doc = frappe.get_doc("Payment Collection", collection)
+	# The cashier may not read Payment Collections, so the document being paid decides.
+	if doc.references:
+		for row in doc.references:
+			frappe.has_permission(row.reference_doctype, "read", row.reference_name, throw=True)
+	else:
+		doc.check_permission("read")
+
+	return {
+		"status": doc.status,
+		"payment_method": doc.payment_method,
+		"payment_url": doc.payment_url,
+		"payment_qr_code": doc.payment_qr_code,
+		# A card checkout link as a QR, so the customer can pay on their own phone.
+		"payment_url_qr_svg": get_qr_svg_code(doc.payment_url).decode() if doc.payment_url else None,
+	}
 
 
 def get_payable_document(doctype: str, name: str):

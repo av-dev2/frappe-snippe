@@ -22,6 +22,7 @@ from frappe_snippe.api.client import (
 	validate_rows_currency,
 )
 from frappe_snippe.api.webhooks import get_webhook_url, notify_owner
+from frappe_snippe.frappe_snippe.doctype.payment_disbursement.payees import fill_payee_details
 
 # what a resent row keeps; status, references and accounting start afresh
 RETRY_ROW_FIELDS = (
@@ -48,18 +49,16 @@ class PaymentDisbursement(Document):
 			# Payouts leave the Snippe balance, so they are always credited from its Wallet Account.
 			self.paid_from_account = setting.wallet_account
 		validate_rows_currency(self.items)
+		fill_payee_details(self.items)
 		for row in self.items:
 			to_snippe_amount(row.amount)
 			if not is_valid_idempotency_key(row.idempotency_key):
 				row.idempotency_key = new_idempotency_key()
-			if row.channel == "Mobile Money":
-				row.set_party_phone()
-				# A missing phone is typed in by hand; only submitting needs it.
-				if row.phone_number:
-					row.phone_number = normalize_phone(row.phone_number)
-			else:
-				row.set_party_bank_details()
+			if row.channel != "Mobile Money":
 				row.validate_bank_details()
+			# A missing phone is typed in by hand; only submitting needs it.
+			elif row.phone_number:
+				row.phone_number = normalize_phone(row.phone_number)
 		self.validate_amounts_due()
 		if self.has_amounts_changed():
 			self.clear_fees_and_balance()

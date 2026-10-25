@@ -3,15 +3,20 @@ import time
 import uuid
 from collections import defaultdict
 from contextlib import contextmanager
+from datetime import date, datetime
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 import frappe
 from erpnext import get_company_currency
 from frappe import _
-from frappe.utils import cint, flt
+from frappe.utils import cint, flt, get_system_timezone
 from snippe import AuthenticationError, ConflictError, RateLimitError, Snippe, ValidationError
 
 SNIPPE_CURRENCY = "TZS"
+LIST_PAGE_SIZE = 100
+# Two lists of 20 pages stay inside Snippe's 60 requests a minute.
+LIST_MAX_PAGES = 20
 MINIMUM_AMOUNT = 500
 IDEMPOTENCY_KEY_LENGTH = 30
 RATE_LIMIT_WAIT_SECONDS = 60
@@ -40,6 +45,10 @@ SESSION_STATUS = {
 }
 
 
+class TooManyRecordsError(frappe.ValidationError):
+	pass
+
+
 class SnippeClient(Snippe):
 	"""Snippe SDK client plus the Payment Sessions endpoints, which SDK 0.1.4 lacks.
 
@@ -61,7 +70,7 @@ class SnippeClient(Snippe):
 		return super()._handle_response(response)
 
 	def get_payment_data(self, reference):
-		"""Raw payment, which keeps the settlement fees that the SDK Payment model drops."""
+		"""Raw payment status; unlike List Payments and the webhook, it has no settlement fees."""
 		return self._handle_response(self._client.get(f"/payments/{quote(reference, safe='')}"))
 
 	def create_session(
@@ -220,6 +229,35 @@ def validate_snippe_account_currency(account: str):
 			),
 			title=_("Unsupported Currency"),
 		)
+
+
+def list_since(list_page, from_date: date) -> dict:
+	"""Records of a newest-first Snippe list by reference, paged until they pass from_date.
+
+	Each record gets its local date; List Payments records also carry their settlement fees.
+	"""
+	records = {}
+	for page in range(LIST_MAX_PAGES):
+		data = list_page(limit=LIST_PAGE_SIZE, offset=page * LIST_PAGE_SIZE)
+		items = data.get("items") or []
+		for item in items:
+			item["date"] = to_local_date(item["created_at"])
+			records[item["reference"]] = item
+
+		is_last_page = (page + 1) * LIST_PAGE_SIZE >= cint(data.get("total"))
+		if not items or items[-1]["date"] < from_date or is_last_page:
+			return records
+
+	raise TooManyRecordsError(
+		_("Snippe has more than {0} records since {1}.").format(
+			LIST_MAX_PAGES * LIST_PAGE_SIZE, frappe.format(from_date, "Date")
+		)
+	)
+
+
+def to_local_date(timestamp: str) -> date:
+	moment = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+	return moment.astimezone(ZoneInfo(get_system_timezone())).date()
 
 
 def normalize_phone(phone):

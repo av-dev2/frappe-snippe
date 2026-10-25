@@ -7,6 +7,7 @@ from frappe.model.document import Document
 from snippe.types import BankCode
 
 SNIPPE_BANK_CODES = typing.get_args(BankCode)
+PARTY_PHONE_FIELDS = {"Employee": "cell_number", "Supplier": "mobile_no", "Customer": "mobile_no"}
 
 
 class PaymentDisbursementItem(Document):
@@ -24,6 +25,15 @@ class PaymentDisbursementItem(Document):
 		)
 		# Link fetches ran before validate, so fetch the code of the bank set here.
 		self.bank_code = self.bank_code or frappe.db.get_value("Bank", self.bank, "bank_code")
+
+	def set_party_phone(self):
+		"""Fill a blank phone from the payee's own record."""
+		if self.phone_number or not self.reference_name:
+			return
+
+		party_type, party = self.get_party()
+		if party_type in PARTY_PHONE_FIELDS:
+			self.phone_number = frappe.db.get_value(party_type, party, PARTY_PHONE_FIELDS[party_type])
 
 	def get_party(self) -> tuple[str, str]:
 		if self.reference_doctype == "Purchase Invoice":

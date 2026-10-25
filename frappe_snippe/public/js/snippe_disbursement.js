@@ -85,48 +85,32 @@ frappe.ui.form.on("Expense Claim", {
 	},
 });
 
-// Payroll Entry needs a special function to pull all unpaid Salary Slips
+// Payroll Entry pulls the Salary Slips that still have pay left from the server
 frappe.ui.form.on("Payroll Entry", {
 	refresh: function (frm) {
 		when_snippe_enabled(frm, "enable_payouts", () => {
 			frm.add_custom_button(
 				__("Disburse via Snippe"),
 				function () {
-					frappe.call({
-						method: "frappe.client.get_list",
-						args: {
-							doctype: "Salary Slip",
-							filters: {
-								payroll_entry: frm.doc.name,
-								docstatus: 1,
-							},
-							fields: ["name", "employee_name", "rounded_total", "net_pay"],
-						},
-						callback: function (r) {
-							if (r.message && r.message.length > 0) {
-								let items = r.message.map((slip) => {
-									return {
-										reference_doctype: "Salary Slip",
-										reference_name: slip.name,
-										recipient_name: slip.employee_name,
-										amount: slip.rounded_total || slip.net_pay,
-										channel: "Bank Transfer",
-									};
-								});
-
-								frappe.new_doc("Payment Disbursement", {
-									company: frm.doc.company,
-									disbursement_type: "Salary",
-									payroll_entry: frm.doc.name,
-									items: items,
-								});
-							} else {
+					frappe
+						.xcall(
+							"frappe_snippe.frappe_snippe.doctype.payment_disbursement.payment_disbursement.get_salary_slip_rows",
+							{ payroll_entry: frm.doc.name }
+						)
+						.then((items) => {
+							if (!items.length) {
 								frappe.msgprint(
 									__("No unpaid salary slips found for this payroll.")
 								);
+								return;
 							}
-						},
-					});
+							frappe.new_doc("Payment Disbursement", {
+								company: frm.doc.company,
+								disbursement_type: "Salary",
+								payroll_entry: frm.doc.name,
+								items: items,
+							});
+						});
 				},
 				__("Create")
 			);

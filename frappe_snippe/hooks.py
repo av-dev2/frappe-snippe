@@ -172,6 +172,7 @@ doc_events = {
 
 scheduler_events = {
 	"hourly": ["frappe_snippe.tasks.hourly"],
+	"daily": ["frappe_snippe.tasks.daily"],
 }
 
 # Testing

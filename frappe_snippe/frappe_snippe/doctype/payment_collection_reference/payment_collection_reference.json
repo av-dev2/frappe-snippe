@@ -16,7 +16,7 @@
    "fieldname": "reference_doctype",
    "fieldtype": "Select",
    "label": "Reference DocType",
-   "options": "Sales Invoice\nSales Order",
+   "options": "Sales Invoice\nPOS Invoice\nSales Order",
    "in_list_view": 1,
    "reqd": 1
   },

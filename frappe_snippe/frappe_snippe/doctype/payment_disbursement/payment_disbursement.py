@@ -23,6 +23,18 @@ from frappe_snippe.api.client import (
 )
 from frappe_snippe.api.webhooks import get_webhook_url, notify_owner
 
+# what a resent row keeps; status, references and accounting start afresh
+RETRY_ROW_FIELDS = (
+	"reference_doctype",
+	"reference_name",
+	"recipient_name",
+	"amount",
+	"channel",
+	"phone_number",
+	"bank",
+	"bank_code",
+	"bank_account",
+)
 # Snippe keeps an idempotency key for 24 hours; after that a resent payout could pay twice.
 RESUME_WINDOW_HOURS = 20
 
@@ -212,6 +224,27 @@ class PaymentDisbursement(Document):
 			deduplicate=True,
 			enqueue_after_commit=True,
 		)
+
+	@frappe.whitelist()
+	def make_retry_disbursement(self) -> str:
+		"""A draft disbursement of the failed and reversed rows, to fix their details and pay them again."""
+		rows = [row for row in self.items if row.status in ("Failed", "Reversed")]
+		if self.docstatus != 1 or not rows:
+			frappe.throw(_("Only a submitted disbursement with failed or reversed rows can be resent."))
+
+		retry = frappe.get_doc(
+			{
+				"doctype": "Payment Disbursement",
+				"company": self.company,
+				"disbursement_type": self.disbursement_type,
+				"payroll_entry": self.payroll_entry,
+				"narration": self.narration,
+				"retry_of": self.name,
+				"items": [{field: row.get(field) for field in RETRY_ROW_FIELDS} for row in rows],
+			}
+		)
+		retry.insert()
+		return retry.name
 
 	def get_unsent_rows(self):
 		return [row for row in self.items if row.status == "Pending" and not row.snippe_reference]

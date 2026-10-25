@@ -1,5 +1,11 @@
 const SNIPPE_PAYMENT_METHOD =
 	"frappe_snippe.frappe_snippe.doctype.payment_collection.payment_collection";
+const PAYMENT_CHECK_SECONDS = 5;
+const PRIMARY_ACTION_LABELS = {
+	"Mobile Money": __("Send USSD Push"),
+	Card: __("Create Card Payment"),
+	"Dynamic QR": __("Show QR Code"),
+};
 
 // Each company's Snippe Setting flags, sent at login by frappe_snippe.api.client.extend_bootinfo.
 function get_collection_companies() {
@@ -50,10 +56,28 @@ function open_snippe_payment_dialog(frm, payment_row) {
 			default: companies.length === 1 ? companies[0] : null,
 			get_query: () => ({ filters: { name: ["in", companies] } }),
 		};
-		const dialog = new frappe.ui.Dialog({
+		// Declared first: the Payment Method onchange can fire while the dialog is still being built.
+		let dialog = null;
+		dialog = new frappe.ui.Dialog({
 			title: __("Make Payment"),
 			fields: [
 				...(frm.doctype === "Customer" ? [company_field] : []),
+				{
+					fieldname: "payment_method",
+					fieldtype: "Select",
+					label: __("Payment Method"),
+					options: [
+						{ value: "Mobile Money", label: __("Mobile Money (USSD push)") },
+						{ value: "Card", label: __("Card") },
+						{ value: "Dynamic QR", label: __("QR Code") },
+					],
+					default: "Mobile Money",
+					reqd: 1,
+					onchange: () =>
+						dialog
+							?.get_primary_btn()
+							.text(PRIMARY_ACTION_LABELS[dialog.get_value("payment_method")]),
+				},
 				{
 					fieldname: "mode_of_payment",
 					fieldtype: "Link",
@@ -83,12 +107,16 @@ function open_snippe_payment_dialog(frm, payment_row) {
 					default: defaults.phone_number,
 				},
 			],
-			primary_action_label: __("Send USSD Push"),
+			primary_action_label: PRIMARY_ACTION_LABELS["Mobile Money"],
 			primary_action(values) {
 				frappe
 					.xcall(`${SNIPPE_PAYMENT_METHOD}.make_payment`, { ...args, ...values })
 					.then((collection) => {
 						dialog.hide();
+						if (values.payment_method !== "Mobile Money") {
+							show_payment_screen(frm, collection);
+							return;
+						}
 						frappe.show_alert({
 							message: __(
 								"USSD push sent with {0}. It is booked when the customer pays.",
@@ -101,6 +129,93 @@ function open_snippe_payment_dialog(frm, payment_row) {
 		});
 		dialog.show();
 	});
+}
+
+// Card and QR payments happen on the customer's side, so the cashier waits here until Snippe confirms.
+function show_payment_screen(frm, collection) {
+	const dialog = new frappe.ui.Dialog({
+		title: __("Waiting for Payment"),
+		fields: [{ fieldname: "payment", fieldtype: "HTML" }],
+		secondary_action_label: __("Close"),
+		secondary_action: () => dialog.hide(),
+	});
+	const wrapper = dialog.fields_dict.payment.$wrapper;
+	let timer = null;
+	let is_rendered = false;
+	// dialog.display follows the open and close animations, so it lags behind the dialog's real state.
+	let is_closed = false;
+	const check = () =>
+		frappe
+			.xcall(`${SNIPPE_PAYMENT_METHOD}.get_payment_progress`, { collection })
+			.then((progress) => {
+				if (is_closed) return;
+				if (!is_rendered) {
+					render_payment(wrapper, progress);
+					is_rendered = true;
+				}
+				show_payment_status(wrapper, progress.status);
+				if (progress.status === "Pending") return;
+
+				clearInterval(timer);
+				if (progress.status === "Completed") {
+					is_closed = true;
+					dialog.hide();
+					frappe.show_alert({ message: __("Payment received"), indicator: "green" });
+					frm.reload_doc();
+				}
+			});
+	dialog.onhide = () => {
+		is_closed = true;
+		clearInterval(timer);
+	};
+	dialog.show();
+	check();
+	timer = setInterval(check, PAYMENT_CHECK_SECONDS * 1000);
+}
+
+function render_payment(wrapper, progress) {
+	const $body = $('<div class="text-center"></div>').appendTo(wrapper);
+	if (progress.payment_qr_code) {
+		// Snippe sends the QR as a Base64 image, with or without its data: prefix.
+		const qr_code = progress.payment_qr_code.startsWith("data:")
+			? progress.payment_qr_code
+			: `data:image/png;base64,${progress.payment_qr_code}`;
+		$("<img>")
+			.attr({ src: qr_code, alt: __("Payment QR code"), width: 240 })
+			.appendTo($body);
+		$("<p>")
+			.text(__("Ask the customer to scan this code with their mobile money or banking app."))
+			.appendTo($body);
+	}
+	if (progress.payment_url && progress.payment_url.startsWith("https://")) {
+		$('<button class="btn btn-primary btn-sm"></button>')
+			.text(__("Open Card Payment"))
+			.on("click", () => window.open(progress.payment_url, "_blank", "noopener"))
+			.appendTo($("<p>").appendTo($body));
+		$("<img>")
+			.attr({
+				src: `data:image/svg+xml;base64,${progress.payment_url_qr_svg}`,
+				alt: __("Card payment link"),
+				width: 200,
+			})
+			.appendTo($body);
+		$("<p>")
+			.text(__("Or the customer scans this code to pay by card on their own phone."))
+			.appendTo($body);
+	}
+	$('<p class="text-muted snippe-payment-status"></p>').appendTo($body);
+}
+
+function show_payment_status(wrapper, status) {
+	wrapper
+		.find(".snippe-payment-status")
+		.text(
+			status === "Pending"
+				? __("Waiting for the customer to pay...")
+				: __("Payment {0}. Take payment another way, or make a new payment.", [
+						__(status).toLowerCase(),
+				  ])
+		);
 }
 
 // Grid cells only show formatted values, so unpaid Phone rows get a Pay button through the formatter.

@@ -19,6 +19,8 @@
   "failure_reason",
   "processing_section",
   "processing_status",
+  "customer",
+  "payment_entry",
   "processing_error",
   "raw_payload_section",
   "raw_payload"
@@ -124,10 +126,27 @@
    "fieldname": "processing_status",
    "fieldtype": "Select",
    "label": "Processing Status",
-   "options": "Queued\nProcessed\nFailed",
+   "options": "Queued\nProcessed\nNeeds Review\nFailed",
    "read_only": 1,
    "in_list_view": 1,
    "in_standard_filter": 1
+  },
+  {
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "label": "Customer",
+   "options": "Customer",
+   "depends_on": "eval:doc.direction == 'Inbound' && !doc.source_name",
+   "read_only_depends_on": "eval:doc.payment_entry",
+   "description": "For a payment with no ERPNext document: the customer whose advance it becomes. Set it, save, then Reprocess."
+  },
+  {
+   "fieldname": "payment_entry",
+   "fieldtype": "Link",
+   "label": "Payment Entry",
+   "options": "Payment Entry",
+   "read_only": 1,
+   "depends_on": "payment_entry"
   },
   {
    "depends_on": "processing_error",

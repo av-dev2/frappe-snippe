@@ -74,7 +74,7 @@ class InvoicePaymentTestCase(TzsCompanyTestCase):
 
 	def pay(self, invoice, amount, payment_row=None):
 		with patch.object(payment_collection, "get_snippe_client", return_value=make_client()):
-			name = payment_collection.pay_invoice(
+			name = payment_collection.make_payment(
 				invoice.doctype, invoice.name, "0712345678", PHONE_MODE, amount, payment_row
 			)
 		return frappe.get_doc("Payment Collection", name)
@@ -130,7 +130,7 @@ class TestPayInvoice(InvoicePaymentTestCase):
 	def test_dialog_defaults_come_from_the_invoice(self):
 		frappe.db.set_value("Customer", self.customer, "mobile_no", "0754000111")
 		invoice = make_draft_sales_invoice(self.customer, 20000)
-		defaults = payment_collection.get_invoice_payment("Sales Invoice", invoice.name)
+		defaults = payment_collection.get_payment_defaults("Sales Invoice", invoice.name)
 		self.assertEqual(defaults, {"phone_number": "0754000111", "mode_of_payment": None, "amount": 20000})
 
 	def test_push_creates_and_submits_a_collection_for_the_draft(self):
@@ -156,8 +156,10 @@ class TestPayInvoice(InvoicePaymentTestCase):
 			self.pay(invoice, 9000)
 
 	def test_only_invoices_can_be_paid(self):
-		with self.assertRaisesRegex(frappe.ValidationError, "only a Sales Invoice or a POS Invoice"):
-			payment_collection.pay_invoice("Journal Entry", "JV-1", "0712345678", PHONE_MODE, 500)
+		with self.assertRaisesRegex(
+			frappe.ValidationError, "only for a Sales Invoice, POS Invoice, Loan or Customer"
+		):
+			payment_collection.make_payment("Journal Entry", "JV-1", "0712345678", PHONE_MODE, 500)
 
 	def test_pos_amount_left_excludes_other_payment_rows(self):
 		invoice = frappe._dict(
@@ -252,7 +254,10 @@ class TestBookCollection(InvoicePaymentTestCase):
 		collection = MagicMock(
 			mode_of_payment=PHONE_MODE, payment_row=None, snippe_reference="pi_new", references=[]
 		)
-		with patch.object(webhooks, "make_wallet_journal_entry", return_value=None):
+		with (
+			patch.object(webhooks, "get_pos_wallet_amounts", return_value={}),
+			patch.object(webhooks, "make_wallet_journal_entry", return_value=None),
+		):
 			webhooks.add_pos_payment(invoice, collection, 5000, 0)
 		self.assertEqual(
 			(invoice.payments[-1].mode_of_payment, invoice.payments[-1].amount), (PHONE_MODE, 5000)

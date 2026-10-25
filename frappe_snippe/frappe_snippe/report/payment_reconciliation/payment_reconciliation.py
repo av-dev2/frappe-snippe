@@ -1,21 +1,19 @@
-from datetime import date, datetime
-from zoneinfo import ZoneInfo
+from datetime import date
 
 import frappe
 from frappe import _
-from frappe.utils import add_days, cint, flt, get_system_timezone, getdate
+from frappe.utils import add_days, flt, getdate
 
 from frappe_snippe.api.client import (
 	PAYMENT_STATUS,
 	PAYOUT_STATUS,
+	TooManyRecordsError,
 	get_snippe_client,
+	list_since,
 	snippe_errors_as_messages,
 )
 from frappe_snippe.frappe_snippe.report.period import get_period_dates
 
-PAGE_SIZE = 100
-# Two lists of 20 pages stay inside Snippe's 60 requests a minute.
-MAX_PAGES = 20
 REVIEW_STATUSES = ("Needs Review", "Failed")
 
 
@@ -27,8 +25,11 @@ def execute(filters=None):
 
 	with get_snippe_client(filters.company) as client, snippe_errors_as_messages():
 		# A day earlier, so a payment late on the day before still matches a document posted on From Date.
-		payments = get_snippe_records(client.list_payment_data, add_days(from_date, -1))
-		payouts = get_snippe_records(client.list_payout_data, add_days(from_date, -1))
+		try:
+			payments = list_since(client.list_payment_data, add_days(from_date, -1))
+			payouts = list_since(client.list_payout_data, add_days(from_date, -1))
+		except TooManyRecordsError as e:
+			frappe.throw(_("{0} Choose a shorter Period.").format(str(e)))
 
 	rows = [
 		*compare(
@@ -42,31 +43,6 @@ def execute(filters=None):
 		rows = [row for row in rows if row["result"] != "Matched"]
 
 	return get_columns(), rows, None, None, summary
-
-
-def get_snippe_records(list_page, from_date: date) -> dict:
-	"""Snippe's records from from_date onwards by reference; lists come newest first."""
-	records = {}
-	for page in range(MAX_PAGES):
-		data = list_page(limit=PAGE_SIZE, offset=page * PAGE_SIZE)
-		items = data.get("items") or []
-		for item in items:
-			item["date"] = to_local_date(item["created_at"])
-			records[item["reference"]] = item
-
-		if not items or items[-1]["date"] < from_date or (page + 1) * PAGE_SIZE >= cint(data.get("total")):
-			return records
-
-	frappe.throw(
-		_("Snippe has more than {0} records since {1}. Choose a shorter Period.").format(
-			MAX_PAGES * PAGE_SIZE, frappe.format(from_date, "Date")
-		)
-	)
-
-
-def to_local_date(timestamp: str) -> date:
-	moment = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-	return moment.astimezone(ZoneInfo(get_system_timezone())).date()
 
 
 def get_erpnext_payments(filters, snippe_payments: dict) -> dict:

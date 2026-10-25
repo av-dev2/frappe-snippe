@@ -21,7 +21,7 @@ from frappe_snippe.api.client import (
 	to_snippe_amount,
 	validate_rows_currency,
 )
-from frappe_snippe.api.webhooks import get_webhook_url
+from frappe_snippe.api.webhooks import get_webhook_url, notify_owner
 
 # Snippe keeps an idempotency key for 24 hours; after that a resent payout could pay twice.
 RESUME_WINDOW_HOURS = 20
@@ -41,7 +41,10 @@ class PaymentDisbursement(Document):
 			if not is_valid_idempotency_key(row.idempotency_key):
 				row.idempotency_key = new_idempotency_key()
 			if row.channel == "Mobile Money":
-				row.phone_number = normalize_phone(row.phone_number)
+				row.set_party_phone()
+				# A missing phone is typed in by hand; only submitting needs it.
+				if row.phone_number:
+					row.phone_number = normalize_phone(row.phone_number)
 			else:
 				row.set_party_bank_details()
 				row.validate_bank_details()
@@ -93,6 +96,15 @@ class PaymentDisbursement(Document):
 		self.total_to_deduct = self.total_amount + self.total_fee
 
 	def before_submit(self):
+		missing_phones = [
+			str(row.idx) for row in self.items if row.channel == "Mobile Money" and not row.phone_number
+		]
+		if missing_phones:
+			frappe.throw(
+				_("Set the Phone Number of the Mobile Money rows {0}.").format(", ".join(missing_phones)),
+				title=_("Missing Phone Number"),
+			)
+
 		if not self.balance_checked_on:
 			frappe.throw(
 				_("Click Check Fees & Balance before submitting."),
@@ -230,23 +242,41 @@ def get_salary_slip_rows(payroll_entry: str) -> list[dict]:
 	slips = frappe.get_all(
 		"Salary Slip",
 		filters={"payroll_entry": payroll_entry, "docstatus": 1},
-		fields=["name", "employee_name"],
+		fields=["name", "employee", "employee_name"],
 	)
 	if not slips:
 		return []
 
 	left_to_pay = get_amounts_left_to_pay("Salary Slip", [slip.name for slip in slips], "")
+	employees = {
+		employee.name: employee
+		for employee in frappe.get_all(
+			"Employee",
+			filters={"name": ("in", list({slip.employee for slip in slips}))},
+			fields=["name", "payout_channel", "bank_ac_no", "cell_number"],
+		)
+	}
 	return [
 		{
 			"reference_doctype": "Salary Slip",
 			"reference_name": slip.name,
 			"recipient_name": slip.employee_name,
 			"amount": left_to_pay[slip.name],
-			"channel": "Bank Transfer",
+			"channel": get_payout_channel(employees[slip.employee]),
+			"phone_number": employees[slip.employee].cell_number,
 		}
 		for slip in slips
 		if flt(left_to_pay[slip.name]) > 0
 	]
+
+
+def get_payout_channel(employee) -> str:
+	"""The employee's Payout Channel; when empty, a bank account wins over a cell number."""
+	if employee.payout_channel:
+		return employee.payout_channel
+	if employee.cell_number and not employee.bank_ac_no:
+		return "Mobile Money"
+	return "Bank Transfer"
 
 
 def process_disbursement_queue(payment_disbursement: str):
@@ -303,13 +333,18 @@ def update_status(self):
 	failed = sum(1 for row in self.items if row.status in ("Failed", "Reversed"))
 
 	if completed == total:
-		self.db_set("status", "Completed")
+		status = "Completed"
 	elif failed == total:
-		self.db_set("status", "Failed")
+		status = "Failed"
 	elif completed > 0 or failed > 0:
-		self.db_set("status", "Partially Completed")
+		status = "Partially Completed"
 	else:
-		self.db_set("status", "Processing")
+		status = "Processing"
+
+	if status != self.status:
+		self.db_set("status", status, notify=True)
+		if status != "Processing":
+			notify_owner(self, _("{0}: payouts {1}").format(self.name, _(status).lower()))
 
 
 PaymentDisbursement.update_status = update_status

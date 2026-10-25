@@ -3,14 +3,14 @@ import re
 from collections import defaultdict
 
 import frappe
-from erpnext import get_default_cost_center
 from erpnext.accounts.doctype.sales_invoice.sales_invoice import get_bank_cash_account
 from frappe import _
 from frappe.utils import flt, get_url, nowdate
 from snippe import WebhookHandler, WebhookVerificationError
 
-from frappe_snippe.accounting.wallet_entries import post_wallet_entry
+from frappe_snippe.accounting.wallet_entries import add_fee_deduction, post_wallet_entry
 from frappe_snippe.api.client import PAYMENT_STATUS, PAYOUT_STATUS, get_snippe_setting
+from frappe_snippe.api.payment_gateway import book_payment_request
 
 PAYMENT_EVENTS = {
 	f"payment.{status}": PAYMENT_STATUS[status] for status in ("completed", "failed", "expired", "voided")
@@ -233,6 +233,9 @@ def process_outbound_webhook(doc_name, new_status, payload):
 
 def book_collection(collection, paid_amount, fee_amount):
 	"""Record a completed collection: a Payment Entry, or for a draft invoice a payment row or an advance."""
+	if collection.payment_request and book_payment_request(collection, paid_amount, fee_amount):
+		return
+
 	invoice = collection.get_draft_invoice()
 	if collection.get_loan():
 		add_loan_repayment(collection, paid_amount, fee_amount)
@@ -370,12 +373,8 @@ def notify_owner(doc, subject: str):
 def new_receive_payment_entry(
 	*, company, customer, paid_amount, fee_amount, reference_no, posting_date, mode_of_payment=None
 ):
-	"""Unsaved Payment Entry receiving into the Wallet Account.
-
-	Snippe keeps its fee, so the Wallet Account receives the net amount and the fee is a deduction.
-	"""
+	"""Unsaved Payment Entry receiving into the Wallet Account, with Snippe's fee as a deduction."""
 	setting = get_snippe_setting(company)
-	net_amount = flt(paid_amount) - flt(fee_amount)
 	pe = frappe.new_doc("Payment Entry")
 	pe.update(
 		{
@@ -386,21 +385,12 @@ def new_receive_payment_entry(
 			"party": customer,
 			"mode_of_payment": mode_of_payment,
 			"paid_to": setting.get_account("wallet_account"),
-			"paid_amount": net_amount,
-			"received_amount": net_amount,
+			"paid_amount": paid_amount,
 			"reference_no": reference_no,
 			"reference_date": posting_date,
 		}
 	)
-	if fee_amount:
-		pe.append(
-			"deductions",
-			{
-				"account": setting.get_account("fees_account"),
-				"cost_center": get_default_cost_center(company),
-				"amount": fee_amount,
-			},
-		)
+	add_fee_deduction(pe, setting.get_account("fees_account"), fee_amount)
 	return pe
 
 

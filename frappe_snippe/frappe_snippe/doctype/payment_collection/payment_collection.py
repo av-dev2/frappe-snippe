@@ -94,13 +94,12 @@ class PaymentCollection(Document):
 			return PAYMENT_STATUS.get(payment["status"], "Pending"), payment
 
 		session = client.get_session(self.snippe_reference)
-		# A custom-amount session reports the suggested amount, not what the customer paid.
-		amount = (
-			None
-			if self.allow_custom_amount
-			else {"value": session["amount"], "currency": session["currency"]}
-		)
-		return SESSION_STATUS.get(session["status"], "Pending"), {"amount": amount}
+		status = SESSION_STATUS.get(session["status"], "Pending")
+		if self.allow_custom_amount:
+			# Only the webhook knows what a custom-amount payer actually paid.
+			return ("Pending" if status == "Completed" else status), {}
+
+		return status, {"amount": {"value": session["amount"], "currency": session["currency"]}}
 
 	def get_custom_amount_limits(self):
 		if not self.allow_custom_amount:

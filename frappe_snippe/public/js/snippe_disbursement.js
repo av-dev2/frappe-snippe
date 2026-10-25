@@ -5,7 +5,7 @@ function when_snippe_enabled(frm, feature, add_button) {
 	}
 }
 
-function add_snippe_disbursement_button(frm, amount, default_channel) {
+function add_snippe_disbursement_button(frm, amount, default_channel, disbursement_type) {
 	when_snippe_enabled(frm, "enable_payouts", () => {
 		// Need to check if a pending disbursement already exists
 		frappe.db.get_value(
@@ -25,11 +25,12 @@ function add_snippe_disbursement_button(frm, amount, default_channel) {
 							let recipient =
 								frm.doc.employee_name ||
 								frm.doc.supplier_name ||
+								frm.doc.customer_name ||
 								frm.doc.applicant_name ||
 								"";
 							frappe.new_doc("Payment Disbursement", {
 								company: frm.doc.company,
-								disbursement_type: frm.doc.doctype,
+								disbursement_type: disbursement_type || frm.doc.doctype,
 								items: [
 									{
 										reference_doctype: frm.doc.doctype,
@@ -115,5 +116,28 @@ frappe.ui.form.on("Payroll Entry", {
 				__("Create")
 			);
 		});
+	},
+});
+
+frappe.ui.form.on("Sales Invoice", {
+	refresh(frm) {
+		// A Credit Note's negative outstanding amount is what the customer is owed.
+		if (frm.doc.is_return && frm.doc.outstanding_amount < 0) {
+			add_snippe_disbursement_button(
+				frm,
+				-frm.doc.outstanding_amount,
+				"Mobile Money",
+				"Customer Refund"
+			);
+		}
+	},
+});
+
+frappe.ui.form.on("Purchase Order", {
+	refresh(frm) {
+		const advance_left = (frm.doc.rounded_total || frm.doc.grand_total) - frm.doc.advance_paid;
+		if (!["Closed", "On Hold"].includes(frm.doc.status) && advance_left > 0) {
+			add_snippe_disbursement_button(frm, advance_left, "Bank Transfer", "Supplier Advance");
+		}
 	},
 });

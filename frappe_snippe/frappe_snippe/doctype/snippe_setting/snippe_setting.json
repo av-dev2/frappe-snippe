@@ -26,7 +26,8 @@
   "card_redirect_url",
   "card_cancel_url",
   "column_break_lehc",
-  "default_narration"
+  "default_narration",
+  "low_balance_alert"
  ],
  "fields": [
   {
@@ -141,6 +142,13 @@
    "fieldname": "default_narration",
    "fieldtype": "Small Text",
    "label": "Default Payout Narration"
+  },
+  {
+   "fieldname": "low_balance_alert",
+   "fieldtype": "Currency",
+   "label": "Low Balance Alert",
+   "depends_on": "enable_payouts",
+   "description": "Each morning, Accounts Managers are notified when the Snippe balance is below this amount. Leave at 0 for no alert."
   },
   {
    "default": "0",

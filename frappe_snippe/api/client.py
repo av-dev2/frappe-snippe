@@ -119,6 +119,10 @@ class SnippeClient(Snippe):
 		body = response.json()
 		return {"sessions": body["data"], **body.get("meta", {})}
 
+	def trigger_push(self, reference):
+		"""Send the USSD push of a pending mobile payment to the customer's phone again."""
+		return self._handle_response(self._client.post(f"/payments/{quote(reference, safe='')}/push"))
+
 	def cancel_session(self, reference):
 		return self._handle_response(self._client.post(f"/sessions/{quote(reference, safe='')}/cancel"))
 
